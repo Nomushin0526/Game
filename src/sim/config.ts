@@ -35,9 +35,11 @@ export interface LoadoutConfig {
    *
    * The ratio of this to craft speed is what decides how much distance costs
    * accuracy, and it turned out to be the only setting that moves the balance
-   * at all — see the measurements in README.md. At roughly twice a boosting
-   * craft's speed a bolt still reads as fast, while taking long enough over
-   * 100 m that a target which changes course is genuinely missed.
+   * at all — see the measurements in README.md. These values put all three
+   * difficulty tiers inside the design's 45-55% band. They are deliberately
+   * low: a bolt outruns a cruising craft roughly threefold but a boosting one
+   * only by a third, so shooting someone running flat out away from you is not
+   * really on, and the chase has to do the work instead.
    */
   projectileSpeed: number;
   /** Level-flight speed in m/s. */
@@ -339,7 +341,7 @@ export const CONFIG: SkyTagConfig = {
       heatCapacity: 20,
       cooldownTime: 3,
       range: 130,
-      projectileSpeed: 90,
+      projectileSpeed: 65,
       cruiseSpeed: 25,
       boostMultiplier: 1.95,
       boostDrain: 32,
@@ -354,7 +356,7 @@ export const CONFIG: SkyTagConfig = {
       heatCapacity: 20,
       cooldownTime: 3,
       range: 110,
-      projectileSpeed: 81,
+      projectileSpeed: 58,
       cruiseSpeed: 22,
       boostMultiplier: 1.85,
       boostDrain: 26,
