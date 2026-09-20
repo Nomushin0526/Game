@@ -87,6 +87,13 @@ export class Effects {
         case 'itemUsed':
           if (event.kind === 'decoy') this.addPuff(event.pos, 1, 5, SPARK_LIFETIME, 0x9fe8ff);
           if (event.kind === 'shield') this.addPuff(event.pos, 2, 6, SPARK_LIFETIME, 0x7fd4ff);
+          // A ping is a ring that runs out past weapon range, so both players
+          // can see one has gone out even if only one of them knows why.
+          if (event.kind === 'scan') this.addPuff(event.pos, 2, 60, FLASH_LIFETIME, 0x8affc8);
+          if (event.kind === 'overdrive') this.addPuff(event.pos, 2, 8, SPARK_LIFETIME, 0xffb04a);
+          break;
+        case 'snareBurst':
+          this.addPuff(event.pos, 1, event.radius, FLASH_LIFETIME, 0xb07aff);
           break;
         case 'shieldAbsorbed':
           this.addPuff(event.pos, 3.5, event.broke ? 7 : 5, SPARK_LIFETIME, 0x7fd4ff);

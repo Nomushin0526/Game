@@ -54,8 +54,16 @@ export interface LoadoutConfig {
   boostRegen: number;
 }
 
-/** Consumables a craft carries into a round (DESIGN.md has none of these yet). */
-export type ItemKind = 'decoy' | 'shield' | 'flash';
+/**
+ * Consumables a craft carries into a round (DESIGN.md has none of these yet).
+ *
+ * The two kits answer each other. The runner's three deny the hunter
+ * information or time; the hunter's three take it back:
+ * - `scan` beats `decoy` and `flash` -- it finds the real craft by instrument
+ * - `snare` takes the runner's speed away, which is what it escapes with
+ * - `overdrive` gives the hunter speed, which is what it tags with
+ */
+export type ItemKind = 'decoy' | 'shield' | 'flash' | 'scan' | 'snare' | 'overdrive';
 
 interface ItemBase {
   /** Uses available per round. */
@@ -97,12 +105,52 @@ export interface FlashConfig extends ItemBase {
   blindDuration: number;
 }
 
+export interface ScanConfig extends ItemBase {
+  /** Seconds the true contact stays lit after the ping. */
+  duration: number;
+  /**
+   * Metres. Beyond this the ping finds nothing, so it cannot be used to
+   * re-acquire a runner that has genuinely got away -- only one that is hiding
+   * nearby, behind a decoy, or behind a building.
+   */
+  radius: number;
+}
+
+export interface SnareConfig extends ItemBase {
+  /** Seconds before it bursts of its own accord. */
+  fuse: number;
+  /** How fast it is lobbed, m/s. */
+  throwSpeed: number;
+  /** Burst radius, metres. Smaller than a flash: this one has to be aimed. */
+  radius: number;
+  /** Seconds the victim is slowed. */
+  duration: number;
+  /**
+   * Speed multiplier applied to a snared craft.
+   *
+   * This is the hunter's tag tool: a runner at this fraction of its cruise
+   * speed cannot out-run a hunter that was already faster, so closing to
+   * `rules.touchRadius` stops being hopeless.
+   */
+  speedMultiplier: number;
+}
+
+export interface OverdriveConfig extends ItemBase {
+  /** Seconds of surge. */
+  duration: number;
+  /** Speed multiplier stacked on top of boost. */
+  speedMultiplier: number;
+}
+
 export interface ItemsConfig {
   /** Slot order per side. An empty list means that side carries nothing. */
   loadout: Record<Team, ItemKind[]>;
   decoy: DecoyConfig;
   shield: ShieldConfig;
   flash: FlashConfig;
+  scan: ScanConfig;
+  snare: SnareConfig;
+  overdrive: OverdriveConfig;
 }
 
 export interface WeaponConfig {
@@ -329,8 +377,7 @@ export const CONFIG: SkyTagConfig = {
   },
   items: {
     loadout: {
-      // The hunter's kit is deliberately empty for now.
-      hunter: [],
+      hunter: ['scan', 'snare', 'overdrive'],
       runner: ['decoy', 'shield', 'flash'],
     },
     decoy: {
@@ -354,6 +401,31 @@ export const CONFIG: SkyTagConfig = {
       throwSpeed: 45,
       radius: 45,
       blindDuration: 2.2,
+    },
+    // One charge each against the runner's two. Measured: at two charges the
+    // hunter won 68-85% of rounds, because the kit answers the runner's kit
+    // and then the hunter still has the better gun. One charge is the version
+    // that reads as "one shot at each answer" and measures in the target band.
+    scan: {
+      charges: 1,
+      cooldown: 15,
+      duration: 2.5,
+      radius: 120,
+    },
+    snare: {
+      charges: 1,
+      cooldown: 18,
+      fuse: 1.4,
+      throwSpeed: 60,
+      radius: 22,
+      duration: 3,
+      speedMultiplier: 0.55,
+    },
+    overdrive: {
+      charges: 1,
+      cooldown: 20,
+      duration: 4,
+      speedMultiplier: 1.18,
     },
   },
   rules: {
@@ -432,7 +504,12 @@ export const CONFIG: SkyTagConfig = {
     // the pressure: it has `rules.timeLimit` seconds to land the kill or the tag.
     hunter: {
       maxHp: 100,
-      damage: 12,
+      // Cut from 12 when the hunter got its kit. It now has tools for closing,
+      // so it no longer needs a gun that ends rounds on its own — and with
+      // both kits in play, damage finally moved the win rate (it had been flat
+      // across 12/10/8/6 before items existed). Still above the runner's 8,
+      // and with the shorter fire interval the DPS gap is a third.
+      damage: 9,
       fireInterval: 0.18,
       heatCapacity: 20,
       cooldownTime: 3,

@@ -90,6 +90,18 @@ export interface EntityState {
   shieldPool: number;
   /** Seconds left blinded by a flash. Perception is dead while positive. */
   blindTimer: number;
+  /**
+   * Seconds left of an active scan.
+   *
+   * While positive the craft tracks the real enemy by instrument: decoys are
+   * ignored, cover does not hide it, and a flash does not take it away. Only
+   * the range limit in `items.scan.radius` still applies.
+   */
+  revealTimer: number;
+  /** Seconds left slowed by a snare. Cuts top speed, not acceleration. */
+  snareTimer: number;
+  /** Seconds left of an overdrive surge: faster, and boost costs nothing. */
+  overdriveTimer: number;
   /** Bolts fired this round, for the result screen and phase 5's player model. */
   shotsFired: number;
   shotsHit: number;
@@ -124,9 +136,11 @@ export interface DecoyState {
 
 /**
  * What a projectile is for.
- * A `flash` carries no damage and bursts on its fuse instead of on contact.
+ *
+ * Neither `flash` nor `snare` carries damage; both burst in a radius, on
+ * contact or when the fuse runs out, whichever comes first.
  */
-export type ProjectileKind = 'bolt' | 'flash';
+export type ProjectileKind = 'bolt' | 'flash' | 'snare';
 
 /**
  * A bolt in flight.
@@ -236,6 +250,21 @@ export interface BlindedEvent {
   duration: number;
 }
 
+/** A snare charge went off. */
+export interface SnareBurstEvent {
+  type: 'snareBurst';
+  projectileId: number;
+  ownerId: number;
+  pos: Vec3;
+  radius: number;
+}
+
+export interface SnaredEvent {
+  type: 'snared';
+  entityId: number;
+  duration: number;
+}
+
 /** A shield took a hit meant for its owner. */
 export interface ShieldAbsorbedEvent {
   type: 'shieldAbsorbed';
@@ -272,6 +301,8 @@ export type SimEvent =
   | ItemUsedEvent
   | FlashBurstEvent
   | BlindedEvent
+  | SnareBurstEvent
+  | SnaredEvent
   | DecoyGoneEvent
   | ShieldAbsorbedEvent
   | TouchEvent;

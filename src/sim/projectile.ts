@@ -10,7 +10,7 @@
 
 import type { SkyTagConfig } from './config.ts';
 import { applyDamage } from './damage.ts';
-import { detonateFlash } from './items.ts';
+import { detonateFlash, detonateSnare } from './items.ts';
 import { add, raySphere, scale } from './math.ts';
 import type { PhysicsWorld } from './physics.ts';
 import type { DecoyState, EntityState, ProjectileState, SimEvent, Vec3 } from './types.ts';
@@ -61,9 +61,9 @@ export function stepProjectiles(
     if (impact) {
       const point = add(bolt.pos, scale(dir, impact.distance));
 
-      // A grenade that runs into something bursts there rather than at its fuse.
-      if (bolt.kind === 'flash') {
-        events.push(...detonateFlash(bolt, point, entities, ctx.config, ctx.physics));
+      // A charge that runs into something bursts there rather than at its fuse.
+      if (bolt.kind !== 'bolt') {
+        events.push(...burst(bolt, point, entities, ctx));
         continue;
       }
 
@@ -95,10 +95,10 @@ export function stepProjectiles(
     bolt.pos = add(bolt.pos, scale(dir, travel));
     bolt.life -= travel / speed;
     if (bolt.life <= 1e-9) {
-      // A bolt at maximum range just fizzles; a grenade's fuse running out is
-      // the whole point of it.
-      if (bolt.kind === 'flash') {
-        events.push(...detonateFlash(bolt, bolt.pos, entities, ctx.config, ctx.physics));
+      // A bolt at maximum range just fizzles; a thrown charge's fuse running
+      // out is the whole point of it.
+      if (bolt.kind !== 'bolt') {
+        events.push(...burst(bolt, bolt.pos, entities, ctx));
       } else {
         events.push({
           type: 'projectileHit',
@@ -115,6 +115,18 @@ export function stepProjectiles(
   }
 
   return { survivors, events };
+}
+
+/** Set off a thrown charge, whichever kind it is. */
+function burst(
+  charge: ProjectileState,
+  at: Vec3,
+  entities: readonly EntityState[],
+  ctx: ProjectileContext,
+): SimEvent[] {
+  return charge.kind === 'snare'
+    ? detonateSnare(charge, at, entities, ctx.config, ctx.physics)
+    : detonateFlash(charge, at, entities, ctx.config, ctx.physics);
 }
 
 interface Impact {

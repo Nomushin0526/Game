@@ -1,17 +1,22 @@
 /**
- * Consumables: the decoy, the shield and the flash.
+ * Consumables, three to a side.
  *
- * All three exist to give the runner something to do about a hunter that is
- * faster, out-ranges it and out-damages it. Measurement had shown the runner
- * could not win by evading — its only working win condition was shooting the
- * hunter down — so these are the tools that make breaking contact a real play
- * rather than a hope.
- *
- * Each does its work by denying the hunter information or time, never by
- * out-fighting it:
+ * The runner's kit came first, because measurement had shown it could not win
+ * by evading a hunter that is faster, out-ranges it and out-damages it — its
+ * only working win condition was shooting the hunter down. Each of its three
+ * denies the hunter information or time, never out-fighting it:
  * - decoy: gives the hunter the wrong thing to chase
  * - shield: buys seconds to get behind something
  * - flash: takes the hunter's eyes away entirely
+ *
+ * That worked, and left the opposite hole: the hunter won rounds by knockout
+ * and almost never by tagging, which is the win condition the game is named
+ * after. Its kit answers the runner's item for item, and all three aim at the
+ * tag rather than at the kill:
+ * - scan: finds the real craft by instrument, so a decoy or a flash buys
+ *   seconds instead of the whole escape
+ * - snare: takes the runner's top speed away, which is what it escapes with
+ * - overdrive: buys the hunter top speed, which is what it closes with
  */
 
 import type { ItemKind, SkyTagConfig } from './config.ts';
@@ -68,6 +73,9 @@ export function stepItems(
   entity.shieldTimer = Math.max(0, entity.shieldTimer - dt);
   if (entity.shieldTimer === 0) entity.shieldPool = 0;
   entity.blindTimer = Math.max(0, entity.blindTimer - dt);
+  entity.revealTimer = Math.max(0, entity.revealTimer - dt);
+  entity.snareTimer = Math.max(0, entity.snareTimer - dt);
+  entity.overdriveTimer = Math.max(0, entity.overdriveTimer - dt);
 
   const index = input.useItem;
   if (index === NO_ITEM || !ctx.controlEnabled || !entity.alive) return [];
@@ -87,6 +95,9 @@ function use(kind: ItemKind, entity: EntityState, ctx: ItemContext): SimEvent[] 
     case 'decoy': return deployDecoy(entity, ctx);
     case 'shield': return raiseShield(entity, ctx);
     case 'flash': return throwFlash(entity, ctx);
+    case 'scan': return pulseScan(entity, ctx);
+    case 'snare': return throwSnare(entity, ctx);
+    case 'overdrive': return engageOverdrive(entity, ctx);
   }
 }
 
@@ -143,6 +154,75 @@ function throwFlash(entity: EntityState, ctx: ItemContext): SimEvent[] {
   ctx.spawnProjectile(grenade);
 
   return [{ type: 'itemUsed', entityId: entity.id, kind: 'flash', pos: { ...grenade.pos } }];
+}
+
+/**
+ * Light the enemy up on instruments.
+ *
+ * Nothing is resolved here: the ping only sets the timer, and whatever reads
+ * the craft's contact — `Perception` for the CPU, the radar for a human —
+ * applies `items.scan.radius` itself. Keeping the range check at the point of
+ * reading is what lets a runner who is genuinely far away still be lost, and
+ * keeps this module free of the entity list.
+ */
+function pulseScan(entity: EntityState, ctx: ItemContext): SimEvent[] {
+  entity.revealTimer = ctx.config.items.scan.duration;
+  return [{ type: 'itemUsed', entityId: entity.id, kind: 'scan', pos: { ...entity.pos } }];
+}
+
+/** Lob a snare charge; `projectile.ts` bursts it on contact or on its fuse. */
+function throwSnare(entity: EntityState, ctx: ItemContext): SimEvent[] {
+  const cfg = ctx.config.items.snare;
+  const heading = entityForward(entity);
+
+  const charge: ProjectileState = {
+    id: ctx.nextProjectileId(),
+    kind: 'snare',
+    ownerId: entity.id,
+    team: entity.team,
+    pos: add(entity.pos, scale(heading, ctx.config.weapon.muzzleOffset)),
+    vel: add(entity.vel, scale(heading, cfg.throwSpeed)),
+    life: cfg.fuse,
+    damage: 0,
+  };
+  ctx.spawnProjectile(charge);
+
+  return [{ type: 'itemUsed', entityId: entity.id, kind: 'snare', pos: { ...charge.pos } }];
+}
+
+function engageOverdrive(entity: EntityState, ctx: ItemContext): SimEvent[] {
+  entity.overdriveTimer = ctx.config.items.overdrive.duration;
+  return [{ type: 'itemUsed', entityId: entity.id, kind: 'overdrive', pos: { ...entity.pos } }];
+}
+
+/**
+ * Burst a snare: slow everyone caught in the field.
+ *
+ * Deliberately the same shape as a flash burst, radius and line of sight
+ * included, so the two read the same way to a player: get something solid
+ * between you and the throw and it does not reach you.
+ */
+export function detonateSnare(
+  charge: ProjectileState,
+  at: { x: number; y: number; z: number },
+  entities: readonly EntityState[],
+  config: SkyTagConfig,
+  physics: PhysicsWorld,
+): SimEvent[] {
+  const cfg = config.items.snare;
+  const events: SimEvent[] = [
+    { type: 'snareBurst', projectileId: charge.id, ownerId: charge.ownerId, pos: { ...at }, radius: cfg.radius },
+  ];
+
+  for (const entity of entities) {
+    if (entity.id === charge.ownerId || !entity.alive) continue;
+    if (distance(entity.pos, at) > cfg.radius) continue;
+    if (physics.isBlocked(at, entity.pos)) continue;
+
+    entity.snareTimer = Math.max(entity.snareTimer, cfg.duration);
+    events.push({ type: 'snared', entityId: entity.id, duration: cfg.duration });
+  }
+  return events;
 }
 
 /**

@@ -109,6 +109,8 @@ interface Tally {
   decoysPopped: number;
   /** Times a craft was blinded by a flash. */
   blindings: number;
+  /** Times a craft was caught by a snare. */
+  snarings: number;
 }
 
 function emptyTally(): Tally {
@@ -126,6 +128,7 @@ function emptyTally(): Tally {
     itemsUsed: {},
     decoysPopped: 0,
     blindings: 0,
+    snarings: 0,
   };
 }
 
@@ -202,6 +205,9 @@ function playRound(
         case 'blinded':
           tally.blindings++;
           break;
+        case 'snared':
+          tally.snarings++;
+          break;
         default:
           break;
       }
@@ -234,7 +240,8 @@ function itemLine(tally: Tally, rounds: number): string {
   const used = kinds.map((kind) => `${kind} ${per(tally.itemsUsed[kind]!)}`).join('  ');
   return (
     `items/round   ${used}  ` +
-    `| decoys shot ${per(tally.decoysPopped)}  blindings ${per(tally.blindings)}`
+    `| decoys shot ${per(tally.decoysPopped)}  blindings ${per(tally.blindings)}  ` +
+    `snarings ${per(tally.snarings)}`
   );
 }
 

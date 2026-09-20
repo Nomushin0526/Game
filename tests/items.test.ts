@@ -4,6 +4,7 @@ import { loadMap } from '../src/maps/loader.ts';
 import { CONFIG, cloneConfig } from '../src/sim/config.ts';
 import { createEntity } from '../src/sim/entity.ts';
 import { applyDamage } from '../src/sim/damage.ts';
+import { boundsFromMap, stepFlight } from '../src/sim/flight.ts';
 import { createItemSlots } from '../src/sim/items.ts';
 import { distance } from '../src/sim/math.ts';
 import { initPhysics, PhysicsWorld } from '../src/sim/physics.ts';
@@ -30,6 +31,11 @@ function slotOf(kind: 'decoy' | 'shield' | 'flash'): number {
   return CONFIG.items.loadout.runner.indexOf(kind);
 }
 
+/** Slot index of an item in the hunter's loadout. */
+function hunterSlotOf(kind: 'scan' | 'snare' | 'overdrive'): number {
+  return CONFIG.items.loadout.hunter.indexOf(kind);
+}
+
 /** A live round with both craft parked where the test wants them. */
 function arena(seed = 1) {
   const config = cloneConfig();
@@ -53,11 +59,11 @@ function use(slot: number, aimYaw = 0): PlayerInput {
 }
 
 describe('item slots', () => {
-  it('gives the runner the designed loadout and the hunter nothing yet', () => {
+  it('gives each side the loadout its config asks for', () => {
     const runner = createEntity(0, 'runner', { x: 0, y: 50, z: 0 }, CONFIG);
     const hunter = createEntity(1, 'hunter', { x: 0, y: 50, z: 0 }, CONFIG);
     expect(runner.items.map((s) => s.kind)).toEqual(['decoy', 'shield', 'flash']);
-    expect(hunter.items).toEqual([]);
+    expect(hunter.items.map((s) => s.kind)).toEqual(['scan', 'snare', 'overdrive']);
   });
 
   it('starts every slot loaded and ready', () => {
@@ -339,7 +345,10 @@ describe('decoys on the radar', () => {
     id: 1, ownerId, team: 'runner', pos, vel: { x: 0, y: 0, z: 0 }, life: 5,
   });
   const clear = (): boolean => false;
-  const hud = (overrides: Partial<typeof CONFIG.hud> = {}) => ({ ...CONFIG.hud, ...overrides });
+  const hud = (overrides: Partial<typeof CONFIG.hud> = {}) => ({
+    ...CONFIG,
+    hud: { ...CONFIG.hud, ...overrides },
+  });
 
   it('paints a decoy as an extra contact, with nothing to tell them apart', () => {
     // A display that singled out the real craft would let a human read the
@@ -477,6 +486,237 @@ describe('flash grenade', () => {
     expect(p.visible).toBe(false);
     // And the clock on the sighting keeps running while it cannot see.
     expect(p.timeSinceSeen).toBeGreaterThan(0);
+    physics.dispose();
+  });
+});
+
+describe('scan', () => {
+  const tuning = CONFIG.ai.difficulty.hard;
+  const dt = CONFIG.sim.fixedDt;
+
+  /** A hunter parked high over the city, looking along -Z. */
+  const watcher = (): EntityState =>
+    createEntity(0, 'hunter', { x: 0, y: 140, z: 60 }, CONFIG, { aimYaw: 0 });
+
+  it('lights the craft up for its duration and then goes dark', () => {
+    const { world, config, hunter } = arena();
+    world.step([use(hunterSlotOf('scan')), neutralInput()]);
+    expect(hunter.revealTimer).toBeGreaterThan(0);
+
+    world.stepFor(config.items.scan.duration + 0.2, [neutralInput(), neutralInput()]);
+    expect(hunter.revealTimer).toBe(0);
+    world.dispose();
+  });
+
+  it('finds the real craft behind a decoy, and drops the phantom', () => {
+    const physics = new PhysicsWorld(map);
+    const p = new Perception();
+    const self = watcher();
+    const runner = createEntity(1, 'runner', { x: 0, y: 140, z: 0 }, CONFIG);
+
+    // Tracked honestly first, so the phantom has a course to inherit.
+    p.update(self, runner, [], physics, CONFIG, tuning, dt);
+    expect(p.visible).toBe(true);
+
+    // The decoy takes over that position as the runner breaks away.
+    const lure: DecoyState = {
+      id: 1, ownerId: 1, team: 'runner',
+      pos: { x: 0, y: 140, z: 0 }, vel: { x: 0, y: 0, z: 0 }, life: 5,
+    };
+    runner.pos = { x: 40, y: 140, z: 20 };
+    p.update(self, runner, [lure], physics, CONFIG, tuning, dt);
+    expect(p.fooled).toBe(true);
+
+    self.revealTimer = CONFIG.items.scan.duration;
+    p.update(self, runner, [lure], physics, CONFIG, tuning, dt);
+    expect(p.fooled).toBe(false);
+    expect(p.estimate(runner, CONFIG)!.x).toBeCloseTo(runner.pos.x, 5);
+    physics.dispose();
+  });
+
+  it('sees through cover and through a flash, but not past its range', () => {
+    const physics = new PhysicsWorld(map);
+    const p = new Perception();
+    const self = watcher();
+    // Behind the hunter, so the field of view rejects it outright.
+    const runner = createEntity(1, 'runner', { x: 0, y: 140, z: 130 }, CONFIG);
+
+    p.update(self, runner, [], physics, CONFIG, tuning, dt);
+    expect(p.visible).toBe(false);
+
+    self.revealTimer = CONFIG.items.scan.duration;
+    self.blindTimer = 2;
+    p.update(self, runner, [], physics, CONFIG, tuning, dt);
+    expect(p.visible).toBe(true);
+
+    // Beyond the ping's reach the runner is genuinely lost again.
+    runner.pos = { x: 0, y: 140, z: 60 + CONFIG.items.scan.radius + 40 };
+    p.update(self, runner, [], physics, CONFIG, tuning, dt);
+    expect(p.visible).toBe(false);
+    physics.dispose();
+  });
+
+  it('paints one true blip on the radar, with the decoys gone', () => {
+    const self = createEntity(0, 'hunter', { x: 0, y: 100, z: 0 }, CONFIG, { aimYaw: 0 });
+    const runner = createEntity(1, 'runner', { x: 0, y: 100, z: -80 }, CONFIG);
+    const lure: DecoyState = {
+      id: 1, ownerId: 1, team: 'runner',
+      pos: { x: 60, y: 100, z: -40 }, vel: { x: 0, y: 0, z: 0 }, life: 5,
+    };
+    // Everything blocked, so only the scan can be painting anything.
+    const blocked = (): boolean => true;
+
+    expect(radarBlips(self, runner, [lure], CONFIG, blocked)).toEqual([]);
+
+    self.revealTimer = CONFIG.items.scan.duration;
+    const blips = radarBlips(self, runner, [lure], CONFIG, blocked);
+    expect(blips).toHaveLength(1);
+    expect(blips[0]!.distance).toBeCloseTo(80, 6);
+  });
+
+  it('falls back to ordinary sight when the target is out of ping range', () => {
+    const self = createEntity(0, 'hunter', { x: 0, y: 100, z: 0 }, CONFIG, { aimYaw: 0 });
+    // Inside radar range but outside the scan's, with a decoy alongside.
+    const far = CONFIG.items.scan.radius + 10;
+    const runner = createEntity(1, 'runner', { x: 0, y: 100, z: -far }, CONFIG);
+    const lure: DecoyState = {
+      id: 1, ownerId: 1, team: 'runner',
+      pos: { x: 20, y: 100, z: -far }, vel: { x: 0, y: 0, z: 0 }, life: 5,
+    };
+    self.revealTimer = CONFIG.items.scan.duration;
+
+    expect(far).toBeLessThan(CONFIG.hud.radarRange);
+    // Both contacts, undistinguished: a ping that found nothing blanks nothing.
+    expect(radarBlips(self, runner, [lure], CONFIG, () => false)).toHaveLength(2);
+  });
+});
+
+describe('snare', () => {
+  it('bursts on its fuse and slows an enemy in range with line of sight', () => {
+    const { world, config, hunter, runner } = arena();
+    hunter.pos = { x: 0, y: 120, z: 0 };
+    runner.pos = { x: 0, y: 120, z: -15 };
+
+    const events = world.stepFor(config.items.snare.fuse + 0.4, [
+      use(hunterSlotOf('snare')),
+      neutralInput(),
+    ]);
+
+    expect(events.some((e) => e.type === 'snareBurst')).toBe(true);
+    expect(events.some((e) => e.type === 'snared' && e.entityId === runner.id)).toBe(true);
+    expect(runner.snareTimer).toBeGreaterThan(0);
+    world.dispose();
+  });
+
+  it('never catches the craft that threw it, nor one outside the radius', () => {
+    const { world, config, hunter, runner } = arena();
+    runner.pos = { x: 0, y: 120, z: -60 };
+    // Thrown the other way entirely, so the burst is nowhere near the runner.
+    world.stepFor(config.items.snare.fuse + 0.4, [
+      use(hunterSlotOf('snare'), Math.PI),
+      neutralInput(),
+    ]);
+
+    expect(hunter.snareTimer).toBe(0);
+    expect(runner.snareTimer).toBe(0);
+    world.dispose();
+  });
+
+  it('cuts top speed while it lasts, and gives it back afterwards', () => {
+    const config = cloneConfig();
+    const physics = new PhysicsWorld(map);
+    const bounds = boundsFromMap(map);
+    const ctx = { dt: config.sim.fixedDt, config, physics, bounds, controlEnabled: true };
+    // Full forward thrust, held long enough to reach terminal speed.
+    const ahead: PlayerInput = { ...neutralInput(), move: { x: 0, y: 0, z: 1 } };
+
+    const topSpeed = (snared: boolean): number => {
+      const craft = createEntity(0, 'runner', { x: 0, y: 130, z: 120 }, config);
+      for (let i = 0; i < 180; i++) {
+        if (snared) craft.snareTimer = 5;
+        stepFlight(craft, ahead, ctx);
+      }
+      return Math.hypot(craft.vel.x, craft.vel.y, craft.vel.z);
+    };
+
+    const free = topSpeed(false);
+    expect(topSpeed(true)).toBeCloseTo(free * config.items.snare.speedMultiplier, 1);
+    physics.dispose();
+  });
+
+  it('wears off on its own timer', () => {
+    const { world, config, runner } = arena();
+    runner.snareTimer = config.items.snare.duration;
+    world.stepFor(config.items.snare.duration + 0.2);
+    expect(runner.snareTimer).toBe(0);
+    world.dispose();
+  });
+});
+
+describe('overdrive', () => {
+  it('raises top speed for its duration', () => {
+    const config = cloneConfig();
+    const physics = new PhysicsWorld(map);
+    const bounds = boundsFromMap(map);
+    const ctx = { dt: config.sim.fixedDt, config, physics, bounds, controlEnabled: true };
+    const ahead: PlayerInput = { ...neutralInput(), move: { x: 0, y: 0, z: 1 } };
+
+    const topSpeed = (surging: boolean): number => {
+      const craft = createEntity(0, 'hunter', { x: 0, y: 130, z: 120 }, config);
+      for (let i = 0; i < 180; i++) {
+        if (surging) craft.overdriveTimer = 5;
+        stepFlight(craft, ahead, ctx);
+      }
+      return Math.hypot(craft.vel.x, craft.vel.y, craft.vel.z);
+    };
+
+    const normal = topSpeed(false);
+    expect(topSpeed(true)).toBeCloseTo(normal * config.items.overdrive.speedMultiplier, 1);
+    physics.dispose();
+  });
+
+  it('runs the thrusters without touching the gauge', () => {
+    const { world, config, hunter, runner } = arena();
+    // A long clear run along -Z, with the runner parked out of tag range so
+    // the round does not end mid-test.
+    hunter.pos = { x: 0, y: 130, z: 190 };
+    runner.pos = { x: 180, y: 130, z: -190 };
+    const boosting: PlayerInput = { ...neutralInput(), move: { x: 0, y: 0, z: 1 }, boost: true };
+
+    world.step([{ ...boosting, useItem: hunterSlotOf('overdrive') }, neutralInput()]);
+    // Flight runs before items, so the tick the charge is spent on still pays
+    // for its boost. Everything after it is free.
+    const fuel = hunter.boostFuel;
+
+    world.stepFor(config.items.overdrive.duration - 0.5, [boosting, neutralInput()]);
+    expect(hunter.boosting).toBe(true);
+    expect(hunter.boostFuel).toBe(fuel);
+
+    // Once it lapses the boost costs what it always did.
+    world.stepFor(1.5, [boosting, neutralInput()]);
+    expect(hunter.boostFuel).toBeLessThan(config.flight.boostCapacity);
+    world.dispose();
+  });
+
+  it('is cancelled out in part by a snare, rather than beating it outright', () => {
+    const config = cloneConfig();
+    const physics = new PhysicsWorld(map);
+    const bounds = boundsFromMap(map);
+    const ctx = { dt: config.sim.fixedDt, config, physics, bounds, controlEnabled: true };
+    const ahead: PlayerInput = { ...neutralInput(), move: { x: 0, y: 0, z: 1 } };
+
+    const craft = createEntity(0, 'hunter', { x: 0, y: 130, z: 120 }, config);
+    for (let i = 0; i < 180; i++) {
+      craft.overdriveTimer = 5;
+      craft.snareTimer = 5;
+      stepFlight(craft, ahead, ctx);
+    }
+    const both = Math.hypot(craft.vel.x, craft.vel.y, craft.vel.z);
+    const cruise = config.loadout.hunter.cruiseSpeed;
+    const expected =
+      cruise * config.items.overdrive.speedMultiplier * config.items.snare.speedMultiplier;
+
+    expect(both).toBeCloseTo(expected, 1);
     physics.dispose();
   });
 });

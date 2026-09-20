@@ -78,6 +78,12 @@ export class Perception {
     physics: PhysicsWorld,
     config: SkyTagConfig,
   ): { pos: Vec3; vel: Vec3; decoy: boolean } | null {
+    // A live scan overrides everything else: the craft is being tracked on
+    // instruments, so decoys, cover and even a flash in the face do not get in
+    // the way. Only distance does.
+    const revealed = this.revealed(self, enemy, config);
+    if (revealed) return revealed;
+
     // A flash takes the eyes entirely: no contact, and the clock on the last
     // sighting keeps running.
     if (self.blindTimer > 0) return null;
@@ -99,6 +105,25 @@ export class Perception {
     return candidates.reduce((best, candidate) =>
       distance(candidate.pos, anchor) < distance(best.pos, anchor) ? candidate : best,
     );
+  }
+
+  /**
+   * The true contact an active scan hands over, if it is in range.
+   *
+   * Deliberately not subject to the field of view: a ping goes out in every
+   * direction, and a hunter that had to be looking the right way already would
+   * not need it. What it cannot do is find a runner that has genuinely opened
+   * the distance, which is what keeps `hide` worth playing.
+   */
+  private revealed(
+    self: EntityState,
+    enemy: EntityState | undefined,
+    config: SkyTagConfig,
+  ): { pos: Vec3; vel: Vec3; decoy: boolean } | null {
+    if (self.revealTimer <= 0 || !self.alive) return null;
+    if (!enemy || !enemy.alive) return null;
+    if (distance(self.pos, enemy.pos) > config.items.scan.radius) return null;
+    return { pos: enemy.pos, vel: enemy.vel, decoy: false };
   }
 
   private canSee(

@@ -173,6 +173,11 @@
       /* A ring above or below the dot reads as altitude without extra labels. */
       .hud-blip.above { border-top: 3px solid #ffd166; margin-top: -7px; }
       .hud-blip.below { border-bottom: 3px solid #7fd4ff; margin-top: -1px; }
+      /* A live scan: the dish is lit, and the one blip on it is the real craft. */
+      .hud-radar.scanning {
+        border-color: rgba(138, 255, 200, 0.75);
+        box-shadow: 0 0 12px rgba(138, 255, 200, 0.35) inset;
+      }
 
       .hud-banner, .hud-subbanner {
         position: absolute;

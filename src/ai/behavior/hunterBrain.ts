@@ -6,10 +6,10 @@
  * a rough 0..1 scale so `actionHysteresis` means the same thing to each of them.
  */
 
-import { add, distance, normalize, scale, sub } from '../../sim/math.ts';
-import type { Vec3 } from '../../sim/types.ts';
+import { add, angleDelta, distance, lookAngles, normalize, scale, sub } from '../../sim/math.ts';
+import { NO_ITEM, type Vec3 } from '../../sim/types.ts';
 import { canShoot, findCover, sampleArena, searchPoint, shotTarget } from '../tactics.ts';
-import type { Action, Brain, BrainContext, Intent } from '../types.ts';
+import type { Action, Brain, BrainContext, Intent, ItemChoice } from '../types.ts';
 
 /** Distance at which the hunter commits to a tag instead of shooting. */
 const TAG_COMMIT_RANGE = 26;
@@ -132,7 +132,71 @@ const ambush: Action = {
   },
 };
 
-export const hunterBrain: Brain = { actions: [pursue, duel, search, ambush] };
+/**
+ * When to spend a charge.
+ *
+ * The mirror of the runner's rule, and ordered the same way, by urgency. The
+ * ordering encodes what the kit is for: find them first, because nothing else
+ * works on a contact you do not have; then take their speed; then spend your
+ * own. A scan into empty air or an overdrive at 150 m is a wasted round.
+ */
+function chooseItem(ctx: BrainContext): ItemChoice {
+  const ready = (kind: 'scan' | 'snare' | 'overdrive'): number =>
+    ctx.self.items.findIndex((slot) => slot.kind === kind && slot.charges > 0 && slot.cooldown <= 0);
+
+  const items = ctx.config.items;
+  const self = ctx.self;
+
+  // Scan: the answer to every way the runner can take the contact away — a
+  // decoy being chased, a flash in the face, or a craft that has just gone
+  // behind a building. Needs somewhere to look, so a cold trail does not
+  // trigger it: a ping finds nothing at 200 m either.
+  const scan = ready('scan');
+  if (scan >= 0 && self.revealTimer <= 0) {
+    const lost = !ctx.perception.visible && ctx.perception.hasMemory(ctx.config);
+    if ((ctx.perception.fooled || self.blindTimer > 0 || lost) && ctx.range < items.scan.radius) {
+      return scan;
+    }
+  }
+
+  // Snare: thrown at something real, close enough that the lob arrives and
+  // roughly in front. Against a decoy it would only slow a phantom.
+  const snare = ready('snare');
+  const enemy = ctx.enemy;
+  if (snare >= 0 && enemy && !ctx.perception.fooled && ctx.perception.acquired) {
+    const reach = items.snare.throwSpeed * items.snare.fuse;
+    if (ctx.range < reach && enemy.snareTimer <= 0) {
+      const desired = lookAngles(self.pos, enemy.pos);
+      const offAim = Math.abs(angleDelta(self.aimYaw, desired.yaw));
+      if (offAim < 0.4 && !ctx.physics.isBlocked(self.pos, enemy.pos)) return snare;
+    }
+  }
+
+  // Overdrive: the closing move. Only once the tag is a realistic outcome of
+  // the next few seconds, and only when there is something real to close on.
+  const overdrive = ready('overdrive');
+  if (
+    overdrive >= 0 &&
+    self.overdriveTimer <= 0 &&
+    ctx.estimate &&
+    !ctx.perception.fooled &&
+    ctx.range < OVERDRIVE_RANGE
+  ) {
+    return overdrive;
+  }
+
+  return NO_ITEM;
+}
+
+/**
+ * Distance inside which an overdrive is worth spending.
+ *
+ * Four seconds of surge covers something like 200 m, so anything under this is
+ * closable; beyond it the charge runs out mid-chase and buys nothing.
+ */
+const OVERDRIVE_RANGE = 110;
+
+export const hunterBrain: Brain = { actions: [pursue, duel, search, ambush], chooseItem };
 
 /**
  * A point at `range` from the target, on the side the craft is already on.

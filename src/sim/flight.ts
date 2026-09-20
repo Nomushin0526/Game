@@ -85,7 +85,8 @@ export function stepFlight(
 
   updateBoost(entity, input, canSteer && wishStrength > 0, config, dt);
 
-  const maxSpeed = loadout.cruiseSpeed * (entity.boosting ? loadout.boostMultiplier : 1);
+  const boosted = entity.boosting ? loadout.boostMultiplier : 1;
+  const maxSpeed = loadout.cruiseSpeed * boosted * tempo(entity, config);
   const target = scale(wish, maxSpeed);
   const accel = entity.boosting ? flight.accel + flight.boostAccel : flight.accel;
   const rate = wishStrength > 0 ? accel : flight.decel;
@@ -98,6 +99,22 @@ export function stepFlight(
   const events = sweepMove(entity, ctx);
   applyBounds(entity, bounds, flight.bodyRadius);
   return events;
+}
+
+/**
+ * Top-speed multiplier from the items currently on the craft.
+ *
+ * Both act on top speed rather than acceleration, so a snared runner still
+ * handles the same and a hunter in overdrive does not become twitchy — what
+ * changes is only whether one can out-run the other, which is the whole point
+ * of both items. They multiply, so a snared craft in overdrive is somewhere in
+ * between rather than getting the better of the two for free.
+ */
+function tempo(entity: EntityState, config: SkyTagConfig): number {
+  const items = config.items;
+  const surge = entity.overdriveTimer > 0 ? items.overdrive.speedMultiplier : 1;
+  const drag = entity.snareTimer > 0 ? items.snare.speedMultiplier : 1;
+  return surge * drag;
 }
 
 /** Movement wish in world space. Vertical thrust is world-up, not craft-up. */
@@ -129,8 +146,13 @@ function updateBoost(
   entity.boosting = wants && entity.boostFuel > threshold;
 
   if (entity.boosting) {
-    entity.boostFuel = Math.max(0, entity.boostFuel - loadout.boostDrain * dt);
-    if (entity.boostFuel === 0) entity.boosting = false;
+    // Overdrive runs the thrusters off its own supply: the surge is worth
+    // spending a charge on precisely because it does not also empty the gauge
+    // that the chase afterwards depends on.
+    if (entity.overdriveTimer <= 0) {
+      entity.boostFuel = Math.max(0, entity.boostFuel - loadout.boostDrain * dt);
+      if (entity.boostFuel === 0) entity.boosting = false;
+    }
   } else {
     entity.boostFuel = Math.min(flight.boostCapacity, entity.boostFuel + loadout.boostRegen * dt);
   }

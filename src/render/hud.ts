@@ -5,7 +5,7 @@
  * pane; it positions itself over its own viewport.
  */
 
-import type { HudConfig, ItemKind, SkyTagConfig } from '../sim/config.ts';
+import type { ItemKind, SkyTagConfig } from '../sim/config.ts';
 import { dot, forwardVector, rightVector, sub } from '../sim/math.ts';
 import type { PhysicsWorld } from '../sim/physics.ts';
 import { describeResult, type MatchState } from '../sim/rules.ts';
@@ -146,9 +146,11 @@ export class Hud {
       this.enemyHp.set(enemy.hp / this.config.loadout[enemy.team].maxHp, `${Math.ceil(enemy.hp)}`);
     }
 
-    const painted = radarBlips(self, enemy, decoys, this.config.hud, (from, to) =>
+    const painted = radarBlips(self, enemy, decoys, this.config, (from, to) =>
       this.physics.isBlocked(from, to),
     );
+    // A live scan is the one thing that makes the radar trustworthy, so it says so.
+    this.radar.classList.toggle('scanning', self.revealTimer > 0);
 
     while (this.blips.length < painted.length) {
       const blip = el('div', 'hud-blip');
@@ -225,28 +227,24 @@ export interface RadarBlip {
  * radar and ignore the phantom. So contacts are collected the same way
  * `Perception` collects them for the CPU, and a decoy just adds a blip.
  *
+ * A live scan is the exception, and the same exception the CPU gets: while it
+ * lasts, an enemy inside `items.scan.radius` is painted alone, through cover,
+ * and the phantoms drop off the display.
+ *
  * Radar space is rotated into the viewer's heading — up is where they are
- * facing — and scaled by `range`, with anything beyond it left off entirely.
+ * facing — and scaled by `radarRange`, with anything beyond it left off.
  */
 export function radarBlips(
   self: EntityState,
   enemy: EntityState | undefined,
   decoys: readonly DecoyState[],
-  config: HudConfig,
+  config: SkyTagConfig,
   isBlocked: (from: Vec3, to: Vec3) => boolean,
 ): RadarBlip[] {
-  if (config.enemyIndicator === 'never' || !self.alive) return [];
+  const hud = config.hud;
+  if (hud.enemyIndicator === 'never' || !self.alive) return [];
 
-  const contacts: Vec3[] = [];
-  const visible = (at: Vec3): boolean =>
-    config.enemyIndicator === 'always' || !isBlocked(self.pos, at);
-
-  if (enemy && enemy.alive && visible(enemy.pos)) contacts.push(enemy.pos);
-  for (const decoy of decoys) {
-    // Your own phantoms are not contacts to you.
-    if (decoy.ownerId === self.id) continue;
-    if (visible(decoy.pos)) contacts.push(decoy.pos);
-  }
+  const contacts = scanContacts(self, enemy, config) ?? seenContacts(self, enemy, decoys, config, isBlocked);
 
   const forward = forwardVector(self.aimYaw, 0);
   const right = rightVector(self.aimYaw);
@@ -255,20 +253,59 @@ export function radarBlips(
   for (const at of contacts) {
     const offset = sub(at, self.pos);
     const distance = Math.hypot(offset.x, offset.y, offset.z);
-    if (distance > config.radarRange) continue;
+    if (distance > hud.radarRange) continue;
 
     const height = offset.y;
     blips.push({
-      x: dot(offset, right) / config.radarRange,
-      y: dot(offset, forward) / config.radarRange,
+      x: dot(offset, right) / hud.radarRange,
+      y: dot(offset, forward) / hud.radarRange,
       altitude:
-        height > config.radarAltitudeBand ? 'above'
-        : height < -config.radarAltitudeBand ? 'below'
+        height > hud.radarAltitudeBand ? 'above'
+        : height < -hud.radarAltitudeBand ? 'below'
         : 'level',
       distance,
     });
   }
   return blips;
+}
+
+/** What is actually in view: the enemy craft if it is, plus any phantoms. */
+function seenContacts(
+  self: EntityState,
+  enemy: EntityState | undefined,
+  decoys: readonly DecoyState[],
+  config: SkyTagConfig,
+  isBlocked: (from: Vec3, to: Vec3) => boolean,
+): Vec3[] {
+  const visible = (at: Vec3): boolean =>
+    config.hud.enemyIndicator === 'always' || !isBlocked(self.pos, at);
+
+  const contacts: Vec3[] = [];
+  if (enemy && enemy.alive && visible(enemy.pos)) contacts.push(enemy.pos);
+  for (const decoy of decoys) {
+    // Your own phantoms are not contacts to you.
+    if (decoy.ownerId === self.id) continue;
+    if (visible(decoy.pos)) contacts.push(decoy.pos);
+  }
+  return contacts;
+}
+
+/**
+ * The single true contact a live scan gives, or null when no scan applies.
+ *
+ * Null rather than an empty list on purpose: a scan whose target is out of
+ * range should fall back to painting whatever can actually be seen, not
+ * blank the radar.
+ */
+function scanContacts(
+  self: EntityState,
+  enemy: EntityState | undefined,
+  config: SkyTagConfig,
+): Vec3[] | null {
+  if (self.revealTimer <= 0 || !enemy || !enemy.alive) return null;
+  const offset = sub(enemy.pos, self.pos);
+  const range = Math.hypot(offset.x, offset.y, offset.z);
+  return range <= config.items.scan.radius ? [enemy.pos] : null;
 }
 
 /** One item slot chip: key hint, name, charges, and a cooldown wipe. */
@@ -282,6 +319,9 @@ const ITEM_LABELS: Record<ItemKind, string> = {
   decoy: 'デコイ',
   shield: 'シールド',
   flash: 'フラッシュ',
+  scan: 'スキャン',
+  snare: 'スネア',
+  overdrive: 'オーバードライブ',
 };
 
 /** A labelled fill bar. */
