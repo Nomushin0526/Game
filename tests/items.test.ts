@@ -14,7 +14,9 @@ import {
   type EntityState,
   type PlayerInput,
   type SimEvent,
+  type Vec3,
 } from '../src/sim/types.ts';
+import { indicatorContacts } from '../src/render/hud.ts';
 import { World } from '../src/sim/world.ts';
 
 const map = loadMap('city01');
@@ -325,6 +327,48 @@ describe('decoys against AI perception', () => {
     const own: DecoyState = { ...phantom({ x: 0, y: 140, z: 0 }), ownerId: self.id };
     p.update(self, undefined, [own], physics, CONFIG, tuning, dt);
     expect(p.visible).toBe(false);
+  });
+});
+
+describe('decoys against the human HUD', () => {
+  const self = () => createEntity(0, 'hunter', { x: 0, y: 100, z: 0 }, CONFIG);
+  const runner = () => createEntity(1, 'runner', { x: 0, y: 100, z: -80 }, CONFIG);
+  const phantom = (x: number, ownerId = 1): DecoyState => ({
+    id: 1, ownerId, team: 'runner', pos: { x, y: 100, z: -80 }, vel: { x: 0, y: 0, z: 0 }, life: 5,
+  });
+  const clear = () => false;
+
+  it('points at a decoy as well as the craft, with nothing to tell them apart', () => {
+    // A single indicator locked to the real craft would let a human simply
+    // read the HUD and ignore the phantom.
+    const contacts = indicatorContacts(self(), runner(), [phantom(40)], 'always', clear);
+    expect(contacts).toHaveLength(2);
+    expect(contacts.map((c) => c.x).sort()).toEqual([0, 40]);
+  });
+
+  it('hides a contact the policy says is out of sight', () => {
+    const blockDecoy = (_from: Vec3, to: Vec3): boolean => to.x === 40;
+    const contacts = indicatorContacts(self(), runner(), [phantom(40)], 'lineOfSight', blockDecoy);
+    expect(contacts).toHaveLength(1);
+    expect(contacts[0]!.x).toBe(0);
+  });
+
+  it('never points at your own decoy', () => {
+    const me = self();
+    const contacts = indicatorContacts(me, runner(), [phantom(40, me.id)], 'always', clear);
+    expect(contacts).toHaveLength(1);
+  });
+
+  it('shows nothing under the never policy, or when down', () => {
+    expect(indicatorContacts(self(), runner(), [phantom(40)], 'never', clear)).toEqual([]);
+
+    const dead = self();
+    dead.alive = false;
+    expect(indicatorContacts(dead, runner(), [phantom(40)], 'always', clear)).toEqual([]);
+
+    const downedRunner = runner();
+    downedRunner.alive = false;
+    expect(indicatorContacts(self(), downedRunner, [], 'always', clear)).toEqual([]);
   });
 });
 

@@ -279,6 +279,7 @@ function drawPlayers(
     player.hud.update({
       self,
       enemy: world.entities.find((e) => e.id !== self.id),
+      decoys: world.decoys,
       match: world.match,
       camera: player.camera.camera,
       message: bannerFor(world, self.id),

@@ -6,10 +6,10 @@
  */
 
 import * as THREE from 'three';
-import type { SkyTagConfig } from '../sim/config.ts';
+import type { HudConfig, ItemKind, SkyTagConfig } from '../sim/config.ts';
 import type { PhysicsWorld } from '../sim/physics.ts';
 import { describeResult, type MatchState } from '../sim/rules.ts';
-import type { EntityState, ItemSlotState } from '../sim/types.ts';
+import type { DecoyState, EntityState, ItemSlotState, Vec3 } from '../sim/types.ts';
 import { TEAM_COLORS } from './scene.ts';
 
 /** Fraction of the half-extent at which the off-screen arrow sits. */
@@ -27,6 +27,8 @@ export interface HudViewport {
 export interface HudFrame {
   self: EntityState;
   enemy: EntityState | undefined;
+  /** Phantoms in the air. They get an indicator of their own; see `updateEnemy`. */
+  decoys: readonly DecoyState[];
   match: MatchState;
   camera: THREE.Camera;
   /** Banner across the middle of this pane, or null. */
@@ -45,7 +47,15 @@ export class Hud {
   private readonly enemyHp: Bar;
   private readonly boost: Bar;
   private readonly heat: Bar;
-  private readonly arrow: HTMLDivElement;
+  /**
+   * One indicator per contact, real or fake.
+   *
+   * A single arrow locked to the real craft would make the decoy useless
+   * against a human: they would simply read the HUD and ignore the phantom.
+   * The CPU cannot tell them apart, so neither can the HUD.
+   */
+  private readonly arrows: HTMLDivElement[] = [];
+  private readonly arrowLayer: HTMLDivElement;
   private readonly enemyLabel: HTMLDivElement;
   private readonly items: HTMLDivElement;
   private readonly itemSlots: ItemSlotView[] = [];
@@ -82,12 +92,12 @@ export class Hud {
 
     this.banner = el('div', 'hud-banner');
     this.subBanner = el('div', 'hud-subbanner');
-    this.arrow = el('div', 'hud-arrow');
+    this.arrowLayer = el('div', 'hud-arrows');
     this.blindOverlay = el('div', 'hud-blind');
 
     const crosshair = el('div', 'hud-crosshair');
     this.root.append(
-      top, enemyBlock, bottom, this.arrow, crosshair,
+      top, enemyBlock, bottom, this.arrowLayer, crosshair,
       this.blindOverlay, this.banner, this.subBanner,
     );
     container.append(this.root);
@@ -124,7 +134,7 @@ export class Hud {
     const blinded = self.blindTimer > 0;
     this.blindOverlay.style.opacity = blinded ? String(Math.min(1, self.blindTimer / 0.8)) : '0';
 
-    this.updateEnemy(self, enemy, frame.camera);
+    this.updateEnemy(self, enemy, frame.decoys, frame.camera);
 
     this.banner.textContent = frame.message ?? '';
     this.banner.classList.toggle('visible', Boolean(frame.message));
@@ -132,7 +142,12 @@ export class Hud {
     this.subBanner.classList.toggle('visible', Boolean(frame.submessage));
   }
 
-  private updateEnemy(self: EntityState, enemy: EntityState | undefined, camera: THREE.Camera): void {
+  private updateEnemy(
+    self: EntityState,
+    enemy: EntityState | undefined,
+    decoys: readonly DecoyState[],
+    camera: THREE.Camera,
+  ): void {
     if (!enemy || !this.config.hud.showEnemyHp) {
       this.enemyLabel.textContent = '';
       this.enemyHp.root.style.visibility = 'hidden';
@@ -142,27 +157,28 @@ export class Hud {
       this.enemyHp.set(enemy.hp / this.config.loadout[enemy.team].maxHp, `${Math.ceil(enemy.hp)}`);
     }
 
-    const visible = enemy ? this.shouldPoint(self, enemy) : false;
-    this.arrow.style.display = visible ? 'block' : 'none';
-    if (visible && enemy) this.placeArrow(enemy, camera);
-  }
+    const contacts = indicatorContacts(self, enemy, decoys, this.config.hud.enemyIndicator, (from, to) =>
+      this.physics.isBlocked(from, to),
+    );
 
-  /** The `hud.enemyIndicator` policy from config (DESIGN.md section 10). */
-  private shouldPoint(self: EntityState, enemy: EntityState): boolean {
-    if (!enemy.alive || !self.alive) return false;
-    switch (this.config.hud.enemyIndicator) {
-      case 'never': return false;
-      case 'always': return true;
-      case 'lineOfSight': return !this.physics.isBlocked(self.pos, enemy.pos);
+    while (this.arrows.length < contacts.length) {
+      const arrow = el('div', 'hud-arrow');
+      this.arrows.push(arrow);
+      this.arrowLayer.append(arrow);
     }
+    this.arrows.forEach((arrow, index) => {
+      const contact = contacts[index];
+      arrow.style.display = contact ? 'block' : 'none';
+      if (contact) this.placeArrow(arrow, contact, camera);
+    });
   }
 
   /**
    * Put the arrow on the enemy when they are on screen, or pin it to the edge
    * of the pane pointing at them when they are not.
    */
-  private placeArrow(enemy: EntityState, camera: THREE.Camera): void {
-    this.projected.set(enemy.pos.x, enemy.pos.y, enemy.pos.z).project(camera);
+  private placeArrow(arrow: HTMLDivElement, at: Vec3, camera: THREE.Camera): void {
+    this.projected.set(at.x, at.y, at.z).project(camera);
     let { x, y } = this.projected;
     // `project` mirrors points that are behind the camera; flip them back so the
     // arrow points the way the player actually has to turn.
@@ -176,10 +192,10 @@ export class Hud {
       y *= scale;
     }
 
-    this.arrow.classList.toggle('offscreen', offScreen);
-    this.arrow.style.left = `${((x + 1) / 2) * 100}%`;
-    this.arrow.style.top = `${((1 - y) / 2) * 100}%`;
-    this.arrow.style.transform = `translate(-50%, -50%) rotate(${Math.atan2(-y, x) + Math.PI / 2}rad)`;
+    arrow.classList.toggle('offscreen', offScreen);
+    arrow.style.left = `${((x + 1) / 2) * 100}%`;
+    arrow.style.top = `${((1 - y) / 2) * 100}%`;
+    arrow.style.transform = `translate(-50%, -50%) rotate(${Math.atan2(-y, x) + Math.PI / 2}rad)`;
   }
 
   /** Rebuilds the chips only when the loadout changes, e.g. on a side swap. */
@@ -190,7 +206,7 @@ export class Hud {
       slots.forEach((slot, index) => {
         const root = el('div', 'hud-item');
         root.append(el('span', 'hud-item-key', String(index + 1)));
-        root.append(el('span', 'hud-item-name', ITEM_LABELS[slot.kind] ?? slot.kind));
+        root.append(el('span', 'hud-item-name', ITEM_LABELS[slot.kind]));
         const charges = el('span', 'hud-item-charges');
         const cooldown = el('div', 'hud-item-cooldown');
         root.append(charges, cooldown);
@@ -215,6 +231,36 @@ export class Hud {
   }
 }
 
+/**
+ * Every position the HUD should point at, real craft and decoys alike.
+ *
+ * Exported and pure so the rule can be tested without a DOM. A single
+ * indicator locked to the real craft would make the decoy worthless against a
+ * human — they would read the HUD and ignore the phantom — so contacts are
+ * collected the same way `Perception` collects them for the CPU, and nothing
+ * in the output says which is which.
+ */
+export function indicatorContacts(
+  self: EntityState,
+  enemy: EntityState | undefined,
+  decoys: readonly DecoyState[],
+  policy: HudConfig['enemyIndicator'],
+  isBlocked: (from: Vec3, to: Vec3) => boolean,
+): Vec3[] {
+  if (policy === 'never' || !self.alive) return [];
+
+  const visible = (at: Vec3): boolean => policy === 'always' || !isBlocked(self.pos, at);
+  const contacts: Vec3[] = [];
+
+  if (enemy && enemy.alive && visible(enemy.pos)) contacts.push(enemy.pos);
+  for (const decoy of decoys) {
+    // Your own phantoms are not contacts to you.
+    if (decoy.ownerId === self.id) continue;
+    if (visible(decoy.pos)) contacts.push(decoy.pos);
+  }
+  return contacts;
+}
+
 /** One item slot chip: key hint, name, charges, and a cooldown wipe. */
 interface ItemSlotView {
   root: HTMLDivElement;
@@ -222,7 +268,7 @@ interface ItemSlotView {
   cooldown: HTMLDivElement;
 }
 
-const ITEM_LABELS: Record<string, string> = {
+const ITEM_LABELS: Record<ItemKind, string> = {
   decoy: 'デコイ',
   shield: 'シールド',
   flash: 'フラッシュ',
