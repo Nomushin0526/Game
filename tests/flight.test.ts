@@ -3,7 +3,15 @@ import { CONFIG, cloneConfig } from '../src/sim/config.ts';
 import { boundsFromMap, stepFlight, type FlightContext } from '../src/sim/flight.ts';
 import { length } from '../src/sim/math.ts';
 import { initPhysics, PhysicsWorld } from '../src/sim/physics.ts';
-import { neutralInput, type EntityState, type PlayerInput, type Vec3 } from '../src/sim/types.ts';
+import { createEntity } from '../src/sim/entity.ts';
+import {
+  neutralInput,
+  type CollisionEvent,
+  type EntityState,
+  type PlayerInput,
+  type SimEvent,
+  type Vec3,
+} from '../src/sim/types.ts';
 import type { MapData } from '../src/maps/types.ts';
 
 /** A 400 m box of empty air with one 40 m cube parked at the origin. */
@@ -30,20 +38,8 @@ beforeAll(async () => {
 });
 
 function craft(pos: Vec3, overrides: Partial<EntityState> = {}): EntityState {
-  return {
-    id: 0,
-    team: 'runner',
-    pos: { ...pos },
-    vel: { x: 0, y: 0, z: 0 },
-    aimYaw: 0,
-    aimPitch: 0,
-    hp: 100,
-    boostFuel: CONFIG.flight.boostCapacity,
-    boosting: false,
-    stunTimer: 0,
-    alive: true,
-    ...overrides,
-  };
+  const team = overrides.team ?? 'runner';
+  return createEntity(0, team, pos, CONFIG, { aimYaw: 0, ...overrides });
 }
 
 function context(config = CONFIG): FlightContext {
@@ -62,12 +58,16 @@ function input(overrides: Partial<PlayerInput> = {}): PlayerInput {
 
 /** Run `seconds` of flight, returning every collision that happened. */
 function fly(entity: EntityState, cmd: PlayerInput, seconds: number, ctx = context()) {
-  const events = [];
+  const events: SimEvent[] = [];
   for (let i = 0; i < Math.round(seconds * ctx.config.sim.tickRate); i++) {
-    const event = stepFlight(entity, cmd, ctx);
-    if (event) events.push(event);
+    events.push(...stepFlight(entity, cmd, ctx));
   }
   return events;
+}
+
+/** Only the crash reports, not the damage events they carry with them. */
+function crashes(events: SimEvent[]): CollisionEvent[] {
+  return events.filter((e): e is CollisionEvent => e.type === 'collision');
 }
 
 describe('flight', () => {
@@ -107,51 +107,93 @@ describe('flight', () => {
       2,
     );
     expect(e.boosting).toBe(true);
-    expect(e.boostFuel).toBeCloseTo(CONFIG.flight.boostCapacity - CONFIG.flight.boostDrain * 2, 2);
+    expect(e.boostFuel).toBeCloseTo(CONFIG.flight.boostCapacity - CONFIG.loadout.runner.boostDrain * 2, 2);
 
     fly(e, forward, 1);
     expect(e.boosting).toBe(false);
     expect(length(e.vel)).toBeCloseTo(CONFIG.loadout.runner.cruiseSpeed, 2);
     expect(e.boostFuel).toBeCloseTo(
-      CONFIG.flight.boostCapacity - CONFIG.flight.boostDrain * 2 + CONFIG.flight.boostRegen,
+      CONFIG.flight.boostCapacity - CONFIG.loadout.runner.boostDrain * 2 + CONFIG.loadout.runner.boostRegen,
       2,
     );
   });
 
-  it('cuts boost when the gauge empties and waits for the re-engage threshold', () => {
-    const e = craft({ x: -150, y: 60, z: 180 }, { boostFuel: 15 });
+  it('cuts boost the moment the gauge empties', () => {
+    const e = craft({ x: -150, y: 60, z: 180 }, { boostFuel: 20 });
     const cmd = input({ move: { x: 0, y: 0, z: 1 }, boost: true });
+    const ctx = context();
 
-    // 15 units of fuel last 0.5 s, then the gauge refills. While it is still
-    // under boostMinToEngage the craft is held at cruise speed even though
-    // boost is held down.
-    fly(e, cmd, 0.9);
-    expect(e.boosting).toBe(false);
-    expect(e.boostFuel).toBeGreaterThan(0);
-    expect(e.boostFuel).toBeLessThan(CONFIG.flight.boostMinToEngage);
-    expect(length(e.vel)).toBeCloseTo(CONFIG.loadout.runner.cruiseSpeed, 2);
-
-    // Once the gauge crosses the threshold, holding boost engages it again.
-    fly(e, cmd, 0.4);
-    expect(e.boosting).toBe(true);
-    expect(length(e.vel)).toBeGreaterThan(CONFIG.loadout.runner.cruiseSpeed);
+    expect(e.boostFuel).toBeGreaterThan(CONFIG.flight.boostMinToEngage);
+    let ticksBoosting = 0;
+    while (true) {
+      stepFlight(e, cmd, ctx);
+      if (!e.boosting) break;
+      ticksBoosting++;
+      expect(ticksBoosting).toBeLessThan(600);
+    }
+    expect(e.boostFuel).toBe(0);
+    // 20 units at the runner's 26/s drain is a hair under 0.77 s.
+    expect(ticksBoosting / CONFIG.sim.tickRate).toBeCloseTo(20 / CONFIG.loadout.runner.boostDrain, 1);
   });
 
-  it('gives the hunter a weaker boost than the runner', () => {
+  it('will not re-engage boost until the gauge passes the threshold', () => {
+    const cmd = input({ move: { x: 0, y: 0, z: 1 }, boost: true });
+    const ctx = context();
+
+    const low = craft({ x: -150, y: 60, z: 180 }, { boostFuel: CONFIG.flight.boostMinToEngage - 1 });
+    stepFlight(low, cmd, ctx);
+    expect(low.boosting).toBe(false);
+
+    const ready = craft({ x: -150, y: 60, z: 180 }, { boostFuel: CONFIG.flight.boostMinToEngage + 1 });
+    stepFlight(ready, cmd, ctx);
+    expect(ready.boosting).toBe(true);
+  });
+
+  it('refills the gauge while boost is off', () => {
+    const e = craft({ x: -150, y: 60, z: 180 }, { boostFuel: 40 });
+    fly(e, input({ move: { x: 0, y: 0, z: 1 } }), 1);
+    expect(e.boostFuel).toBeCloseTo(40 + CONFIG.loadout.runner.boostRegen, 2);
+  });
+
+  it('gives the hunter the faster craft, cruising and boosting', () => {
+    const cmd = input({ move: { x: 0, y: 0, z: 1 } });
     const hunter = craft({ x: -150, y: 60, z: 150 }, { team: 'hunter' });
     const runner = craft({ x: -140, y: 60, z: 150 }, { team: 'runner' });
-    const cmd = input({ move: { x: 0, y: 0, z: 1 }, boost: true });
-
     fly(hunter, cmd, 2);
     fly(runner, cmd, 2);
-    expect(length(runner.vel)).toBeGreaterThan(length(hunter.vel));
+    expect(length(hunter.vel)).toBeGreaterThan(length(runner.vel));
+
+    const boostedHunter = craft({ x: -150, y: 60, z: 150 }, { team: 'hunter' });
+    const boostedRunner = craft({ x: -140, y: 60, z: 150 }, { team: 'runner' });
+    fly(boostedHunter, { ...cmd, boost: true }, 2);
+    fly(boostedRunner, { ...cmd, boost: true }, 2);
+    expect(length(boostedHunter.vel)).toBeGreaterThan(length(boostedRunner.vel));
+  });
+
+  it('gives the runner the better boost economy to offset that', () => {
+    const cmd = input({ move: { x: 0, y: 0, z: 1 }, boost: true });
+    const hunter = craft({ x: -150, y: 60, z: 150 }, { team: 'hunter' });
+    const runner = craft({ x: -140, y: 60, z: 150 }, { team: 'runner' });
+
+    // Same time on the throttle: the runner has more gauge left.
+    fly(hunter, cmd, 2);
+    fly(runner, cmd, 2);
+    expect(runner.boostFuel).toBeGreaterThan(hunter.boostFuel);
+
+    // And refills what it spent faster.
+    const coast = input({ move: { x: 0, y: 0, z: 1 } });
+    const hunterBefore = hunter.boostFuel;
+    const runnerBefore = runner.boostFuel;
+    fly(hunter, coast, 1);
+    fly(runner, coast, 1);
+    expect(runner.boostFuel - runnerBefore).toBeGreaterThan(hunter.boostFuel - hunterBefore);
   });
 
   it('damages and stuns a craft that slams into a building', () => {
     // 30 m clear run straight at the cube's -X face.
     const e = craft({ x: -50, y: 60, z: 0 }, { aimYaw: -Math.PI / 2 });
     const cmd = input({ move: { x: 0, y: 0, z: 1 }, aimYaw: -Math.PI / 2, boost: true });
-    const events = fly(e, cmd, 3);
+    const events = crashes(fly(e, cmd, 3));
 
     expect(events.length).toBeGreaterThan(0);
     const crash = events[0]!;

@@ -18,7 +18,7 @@ const SOLID_COLORS: Record<SolidTag, number> = {
   prop: 0x39404d,
 };
 
-const TEAM_COLORS: Record<Team, number> = {
+export const TEAM_COLORS: Record<Team, number> = {
   hunter: 0xff5a4a,
   runner: 0x3fd0ff,
 };
@@ -34,6 +34,8 @@ export class SceneRenderer {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(SKY_COLOR);
+    // Split screen clears per viewport instead of per frame.
+    this.renderer.autoClear = false;
 
     this.scene.background = new THREE.Color(SKY_COLOR);
     this.scene.fog = new THREE.Fog(SKY_COLOR, 180, 620);
@@ -143,11 +145,36 @@ export class SceneRenderer {
   }
 
   render(camera: THREE.Camera): void {
+    const size = this.renderer.getSize(new THREE.Vector2());
+    this.renderViewport(camera, 0, 0, size.x, size.y);
+  }
+
+  /**
+   * Draw one split-screen pane. Coordinates are in CSS pixels with the origin
+   * at the bottom-left, matching Three.js's viewport convention.
+   */
+  renderViewport(camera: THREE.Camera, x: number, y: number, width: number, height: number): void {
+    this.renderer.setViewport(x, y, width, height);
+    this.renderer.setScissor(x, y, width, height);
+    this.renderer.setScissorTest(true);
+    this.renderer.clear();
     this.renderer.render(this.scene, camera);
   }
 
   resize(width: number, height: number): void {
     this.renderer.setSize(width, height, false);
+  }
+
+  /** Hide a craft's own hull, e.g. so it does not fill its own chase view. */
+  setCraftVisible(id: number, visible: boolean): void {
+    const mesh = this.craft.get(id);
+    if (mesh) mesh.visible = visible;
+  }
+
+  /** Forget the craft meshes so a new round rebuilds them. */
+  resetCraft(): void {
+    for (const mesh of this.craft.values()) this.scene.remove(mesh);
+    this.craft.clear();
   }
 
   dispose(): void {

@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { loadMap } from '../src/maps/loader.ts';
-import { CONFIG } from '../src/sim/config.ts';
+import { CONFIG, cloneConfig } from '../src/sim/config.ts';
 import { distance } from '../src/sim/math.ts';
 import { initPhysics } from '../src/sim/physics.ts';
 import { Rng } from '../src/sim/rng.ts';
@@ -137,6 +137,7 @@ describe('World', () => {
 
   it('emits collision events when a craft flies into a building', () => {
     const world = new World({ map, seed: 1 });
+    world.skipCountdown();
     // Park the hunter on a collision course with the central tower.
     const hunter = world.entity(0);
     hunter.pos = { x: 0, y: 40, z: -60 };
@@ -146,6 +147,169 @@ describe('World', () => {
 
     expect(events.some((e) => e.type === 'collision' && e.entityId === 0)).toBe(true);
     expect(hunter.hp).toBeLessThan(CONFIG.loadout.hunter.maxHp);
+    world.dispose();
+  });
+});
+
+describe('World rounds', () => {
+  /** A short round so the clock can actually be run out in a test. */
+  function quickConfig() {
+    const config = cloneConfig();
+    config.rules.countdown = 1;
+    config.rules.timeLimit = 2;
+    return config;
+  }
+
+  it('locks control during the countdown and unlocks it on time', () => {
+    const config = quickConfig();
+    const world = new World({ map, config, seed: 1 });
+    const charge = { ...neutralInput(), move: { x: 0, y: 0, z: 1 }, boost: true };
+
+    expect(world.match.phase).toBe('countdown');
+    world.stepFor(0.5, [charge, charge]);
+    expect(world.controlEnabled).toBe(false);
+    expect(world.entities.every((e) => e.vel.x === 0 && e.vel.y === 0 && e.vel.z === 0)).toBe(true);
+
+    world.stepFor(0.6, [charge, charge]);
+    expect(world.match.phase).toBe('live');
+    expect(world.controlEnabled).toBe(true);
+    expect(world.entities.some((e) => e.vel.x !== 0 || e.vel.y !== 0 || e.vel.z !== 0)).toBe(true);
+    world.dispose();
+  });
+
+  it('gives the round to the runner when the clock runs out', () => {
+    const config = quickConfig();
+    const world = new World({ map, config, seed: 1 });
+    world.stepFor(config.rules.countdown + config.rules.timeLimit + 0.1);
+
+    expect(world.match.timeRemaining).toBe(0);
+    expect(world.match.lastResult).toEqual({
+      winnerId: 1,
+      winnerTeam: 'runner',
+      reason: 'timeout',
+    });
+    expect(world.match.scores).toEqual([0, 1]);
+    expect(world.controlEnabled).toBe(false);
+    world.dispose();
+  });
+
+  it('calls the clock a draw when timeoutWinner is set to draw', () => {
+    const config = quickConfig();
+    config.rules.timeoutWinner = 'draw';
+    const world = new World({ map, config, seed: 1 });
+    world.stepFor(config.rules.countdown + config.rules.timeLimit + 0.1);
+
+    expect(world.match.lastResult?.reason).toBe('draw');
+    expect(world.match.scores).toEqual([0, 0]);
+    world.dispose();
+  });
+
+  it('ends the round the moment the hunter tags the runner', () => {
+    const config = quickConfig();
+    const world = new World({ map, config, seed: 1 });
+    world.skipCountdown();
+
+    const hunter = world.entityByTeam('hunter')!;
+    const runner = world.entityByTeam('runner')!;
+    runner.pos = { ...hunter.pos, x: hunter.pos.x + config.rules.touchRadius - 0.2 };
+
+    const events = world.step();
+    expect(events.some((e) => e.type === 'touch')).toBe(true);
+    expect(world.match.lastResult).toEqual({
+      winnerId: hunter.id,
+      winnerTeam: 'hunter',
+      reason: 'touch',
+    });
+    world.dispose();
+  });
+
+  it('ends the round when a craft is shot down', () => {
+    const world = new World({ map, seed: 1 });
+    world.skipCountdown();
+    const runner = world.entityByTeam('runner')!;
+    runner.hp = 1;
+
+    const hunter = world.entityByTeam('hunter')!;
+    // Line the hunter up point blank, just outside tag range.
+    runner.pos = { x: hunter.pos.x, y: hunter.pos.y, z: hunter.pos.z - 10 };
+    const fire = { ...neutralInput(), fire: true, aimYaw: 0 };
+    const inputs = [];
+    inputs[hunter.id] = fire;
+    world.stepFor(0.2, inputs);
+
+    expect(runner.alive).toBe(false);
+    expect(world.match.lastResult?.reason).toBe('hp');
+    expect(world.match.lastResult?.winnerId).toBe(hunter.id);
+    world.dispose();
+  });
+
+  it('swaps sides and respawns fresh craft on the next round', () => {
+    const config = quickConfig();
+    const world = new World({ map, config, seed: 1 });
+    expect(world.entities.map((e) => e.team)).toEqual(['hunter', 'runner']);
+
+    world.stepFor(config.rules.countdown + config.rules.timeLimit + 0.1);
+    expect(world.match.phase).toBe('roundOver');
+
+    world.entities[0]!.hp = 5;
+    expect(world.nextRound()).toBe(true);
+    expect(world.match.round).toBe(2);
+    expect(world.match.phase).toBe('countdown');
+    expect(world.entities.map((e) => e.team)).toEqual(['runner', 'hunter']);
+    // Fresh craft, and each one is built from the side it is now playing.
+    expect(world.entities[0]!.hp).toBe(config.loadout.runner.maxHp);
+    expect(world.entities.every((e) => e.boostFuel === config.flight.boostCapacity)).toBe(true);
+    expect(world.entities.every((e) => e.alive && e.heat === 0 && e.shotsFired === 0)).toBe(true);
+    world.dispose();
+  });
+
+  it('plays a best-of-3 through to a match winner', () => {
+    const config = quickConfig();
+    const world = new World({ map, config, seed: 1 });
+    const roundLength = config.rules.countdown + config.rules.timeLimit + 0.1;
+
+    // Nobody does anything, so the runner takes every round on the clock.
+    // Sides swap, so the two slots trade wins and it goes to a decider.
+    world.stepFor(roundLength);
+    expect(world.match.scores).toEqual([0, 1]);
+    world.nextRound();
+    world.stepFor(roundLength);
+    expect(world.match.scores).toEqual([1, 1]);
+    world.nextRound();
+    world.stepFor(roundLength);
+
+    expect(world.match.scores).toEqual([1, 2]);
+    expect(world.match.phase).toBe('matchOver');
+    expect(world.match.matchWinnerId).toBe(1);
+    expect(world.nextRound()).toBe(false);
+    world.dispose();
+  });
+
+  it('keeps stepping safely after the round is decided', () => {
+    const config = quickConfig();
+    const world = new World({ map, config, seed: 1 });
+    world.stepFor(config.rules.countdown + config.rules.timeLimit + 0.1);
+    const scores = [...world.match.scores];
+
+    const charge = { ...neutralInput(), move: { x: 0, y: 0, z: 1 }, fire: true, boost: true };
+    world.stepFor(2, [charge, charge]);
+    expect(world.match.scores).toEqual(scores);
+    expect(world.entities.every((e) => e.shotsFired === 0)).toBe(true);
+    world.dispose();
+  });
+
+  it('restarts the whole match on reset', () => {
+    const config = quickConfig();
+    const world = new World({ map, config, seed: 1 });
+    world.stepFor(config.rules.countdown + config.rules.timeLimit + 0.1);
+    world.nextRound();
+    expect(world.match.round).toBe(2);
+
+    world.reset();
+    expect(world.match.round).toBe(1);
+    expect(world.match.scores).toEqual([0, 0]);
+    expect(world.match.phase).toBe('countdown');
+    expect(world.entities.map((e) => e.team)).toEqual(['hunter', 'runner']);
     world.dispose();
   });
 });

@@ -8,7 +8,16 @@
 
 import type { Team } from './types.ts';
 
-/** Per-team tuning. The hunter wins by touch as well, so it hits softer. */
+/**
+ * Per-team tuning.
+ *
+ * The asymmetry is deliberate and is the opposite of DESIGN.md 2.3: the hunter
+ * is faster and hits harder on every axis, and the runner's counterweight is
+ * that surviving to the clock wins the round outright (`rules.timeoutWinner`).
+ * The runner's edge is gauge economy, not raw speed: it drains boost slower and
+ * refills it faster, so it can keep breaking line of sight while the hunter has
+ * to spend its gauge to close the gap.
+ */
 export interface LoadoutConfig {
   maxHp: number;
   /** Damage per beam hit. */
@@ -25,6 +34,32 @@ export interface LoadoutConfig {
   cruiseSpeed: number;
   /** Speed multiplier while boosting. */
   boostMultiplier: number;
+  /** Gauge units drained per second of boost. */
+  boostDrain: number;
+  /** Gauge units regained per second when not boosting. */
+  boostRegen: number;
+}
+
+export interface WeaponConfig {
+  /** Radius of the hittable sphere around a craft, metres. */
+  hitRadius: number;
+  /**
+   * Heat bled off per second once the gun has been idle, in shots.
+   *
+   * DESIGN.md only specifies "20 shots then a 3 s cool-down". Without decay the
+   * gun would be dead after 20 shots for the whole match, so heat recovers
+   * between bursts and only a sustained burst overheats.
+   */
+  heatDecay: number;
+  /**
+   * Seconds since the last shot before heat starts bleeding off.
+   *
+   * Must be comfortably longer than any `fireInterval`, otherwise heat would
+   * decay in the gaps inside a burst and a held trigger would never overheat.
+   */
+  heatDecayDelay: number;
+  /** Metres ahead of the craft centre that a beam starts. Cosmetic. */
+  muzzleOffset: number;
 }
 
 export interface FlightConfig {
@@ -37,10 +72,6 @@ export interface FlightConfig {
   /** Extra acceleration applied while boosting, m/s^2. */
   boostAccel: number;
   boostCapacity: number;
-  /** Gauge units drained per second of boost. */
-  boostDrain: number;
-  /** Gauge units regained per second when not boosting. */
-  boostRegen: number;
   /** Boost cannot start again below this gauge value (anti-stutter). */
   boostMinToEngage: number;
   /** Pitch clamp in radians (+/-). */
@@ -81,6 +112,8 @@ export interface RulesConfig {
   swapSidesEachRound: boolean;
   /** Seconds of countdown before control unlocks. */
   countdown: number;
+  /** Seconds the round result stays up before the next round starts. */
+  roundIntermission: number;
   /** Minimum distance between the two spawn points, metres. */
   minSpawnDistance: number;
   /** Seconds of damage immunity after being hit (0 disables). */
@@ -100,6 +133,18 @@ export interface InputConfig {
   aimAssistStrength: number;
 }
 
+export interface HudConfig {
+  /**
+   * How much the HUD tells you about the enemy (DESIGN.md section 10).
+   * - `lineOfSight` only points at them while you can actually see them
+   * - `always` is the arcade-style permanent arrow
+   * - `never` leaves you to find them by eye
+   */
+  enemyIndicator: 'lineOfSight' | 'always' | 'never';
+  /** Show the enemy's HP bar, not just your own. */
+  showEnemyHp: boolean;
+}
+
 export interface SimConfig {
   /** Fixed simulation rate. Never step the world at anything else. */
   tickRate: number;
@@ -112,8 +157,10 @@ export interface SkyTagConfig {
   sim: SimConfig;
   arena: ArenaConfig;
   flight: FlightConfig;
+  weapon: WeaponConfig;
   rules: RulesConfig;
   input: InputConfig;
+  hud: HudConfig;
   loadout: Record<Team, LoadoutConfig>;
 }
 
@@ -135,8 +182,6 @@ export const CONFIG: SkyTagConfig = {
     decel: 30,
     boostAccel: 25,
     boostCapacity: 100,
-    boostDrain: 30,
-    boostRegen: 15,
     boostMinToEngage: 10,
     maxPitch: (80 * Math.PI) / 180,
     minImpactSpeed: 6,
@@ -144,6 +189,12 @@ export const CONFIG: SkyTagConfig = {
     collisionStun: 0.5,
     collisionRestitution: 0,
     skinWidth: 0.05,
+  },
+  weapon: {
+    hitRadius: 1.8,
+    heatDecay: 5,
+    heatDecayDelay: 0.6,
+    muzzleOffset: 2.2,
   },
   rules: {
     timeLimit: 180,
@@ -154,8 +205,15 @@ export const CONFIG: SkyTagConfig = {
     roundsToWin: 2,
     swapSidesEachRound: true,
     countdown: 3,
+    roundIntermission: 4,
     minSpawnDistance: 150,
     hitInvulnerability: 0,
+  },
+  hud: {
+    // Hiding has to mean something in a game of tag, so the default is the
+    // non-cheating one: no arrow through walls, for either side.
+    enemyIndicator: 'lineOfSight',
+    showEnemyHp: true,
   },
   input: {
     mouseSensitivity: 0.0022,
@@ -166,25 +224,33 @@ export const CONFIG: SkyTagConfig = {
     aimAssistStrength: 3.0,
   },
   loadout: {
+    // The hunter out-guns and out-runs the runner on every axis. Its clock is
+    // the pressure: it has `rules.timeLimit` seconds to land the kill or the tag.
     hunter: {
       maxHp: 100,
-      damage: 8,
-      fireInterval: 0.2,
+      damage: 12,
+      fireInterval: 0.18,
       heatCapacity: 20,
       cooldownTime: 3,
-      range: 120,
-      cruiseSpeed: 22,
-      boostMultiplier: 1.8,
+      range: 130,
+      cruiseSpeed: 25,
+      boostMultiplier: 1.95,
+      boostDrain: 32,
+      boostRegen: 14,
     },
+    // The runner wins by staying alive, so it trades firepower and top speed
+    // for a gauge that sustains repeated breaks of line of sight.
     runner: {
       maxHp: 100,
-      damage: 10,
-      fireInterval: 0.2,
+      damage: 8,
+      fireInterval: 0.22,
       heatCapacity: 20,
       cooldownTime: 3,
-      range: 120,
+      range: 110,
       cruiseSpeed: 22,
-      boostMultiplier: 2.0,
+      boostMultiplier: 1.85,
+      boostDrain: 26,
+      boostRegen: 19,
     },
   },
 };

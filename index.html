@@ -5,82 +5,177 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Sky Tag — 空中鬼ごっこ</title>
     <style>
-      :root { color-scheme: dark; }
+      :root {
+        color-scheme: dark;
+        --ink: #e6edf3;
+        --muted: #9fb0c0;
+        --panel: rgba(13, 17, 23, 0.82);
+        --line: rgba(255, 255, 255, 0.14);
+        --hunter: #ff5a4a;
+        --runner: #3fd0ff;
+      }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1117; }
       body {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        color: #e6edf3;
+        color: var(--ink);
+        user-select: none;
       }
       #view { display: block; width: 100%; height: 100%; }
+      #hud, #ui { position: fixed; inset: 0; pointer-events: none; }
+      #ui > * { pointer-events: auto; }
 
-      #hud {
-        position: fixed;
-        inset: auto auto 16px 16px;
-        padding: 10px 14px;
-        background: rgba(13, 17, 23, 0.72);
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 8px;
+      /* ---------- HUD ---------- */
+      .hud-pane {
+        position: absolute;
+        overflow: hidden;
         font-size: 13px;
-        line-height: 1.6;
-        white-space: pre;
-        pointer-events: none;
+        /* A hairline between split-screen panes. */
+        border-bottom: 1px solid rgba(0, 0, 0, 0.45);
       }
-      #crosshair {
-        position: fixed;
+      .hud-top {
+        position: absolute;
+        top: 10px;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: center;
+        align-items: baseline;
+        gap: 18px;
+      }
+      .hud-clock { font-size: 22px; font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+      .hud-clock.urgent { color: #ff7b6b; }
+      .hud-score { font-size: 15px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+      .hud-enemy { position: absolute; top: 44px; left: 50%; transform: translateX(-50%); width: 240px; }
+      .hud-enemy-label { text-align: center; font-size: 11px; color: var(--muted); letter-spacing: 0.1em; }
+
+      .hud-bottom {
+        position: absolute;
+        left: 14px;
+        bottom: 12px;
+        width: 260px;
+        display: grid;
+        gap: 5px;
+      }
+      .hud-role { font-size: 12px; letter-spacing: 0.08em; }
+
+      .hud-bar { display: grid; grid-template-columns: 34px 1fr 52px; align-items: center; gap: 7px; }
+      .hud-bar-enemy { grid-template-columns: 1fr 44px; }
+      .hud-bar-label { font-size: 10px; color: var(--muted); }
+      .hud-bar-track {
+        height: 9px;
+        background: rgba(0, 0, 0, 0.5);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        overflow: hidden;
+      }
+      .hud-bar-fill { height: 100%; width: 0; transition: width 80ms linear; }
+      .hud-bar-value { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+      .hud-bar-hp .hud-bar-fill { background: linear-gradient(90deg, #4ade80, #22c55e); }
+      .hud-bar-enemy .hud-bar-fill { background: linear-gradient(90deg, #f87171, #ef4444); }
+      .hud-bar-boost .hud-bar-fill { background: linear-gradient(90deg, #60a5fa, #3b82f6); }
+      .hud-bar-heat .hud-bar-fill { background: linear-gradient(90deg, #fbbf24, #f97316); }
+      .hud-bar-heat.overheated .hud-bar-fill { background: #ef4444; }
+      .hud-bar-heat.overheated .hud-bar-value { color: #ef4444; }
+
+      .hud-crosshair {
+        position: absolute;
         left: 50%;
         top: 50%;
-        width: 18px;
-        height: 18px;
-        margin: -9px 0 0 -9px;
-        pointer-events: none;
-        opacity: 0.8;
+        width: 16px;
+        height: 16px;
+        margin: -8px 0 0 -8px;
+        opacity: 0.75;
       }
-      #crosshair::before, #crosshair::after {
-        content: '';
-        position: absolute;
-        background: #e6edf3;
-      }
-      #crosshair::before { left: 8px; top: 0; width: 2px; height: 18px; }
-      #crosshair::after { top: 8px; left: 0; height: 2px; width: 18px; }
+      .hud-crosshair::before, .hud-crosshair::after { content: ''; position: absolute; background: var(--ink); }
+      .hud-crosshair::before { left: 7px; top: 0; width: 2px; height: 16px; }
+      .hud-crosshair::after { top: 7px; left: 0; height: 2px; width: 16px; }
 
-      #overlay {
+      .hud-arrow {
+        position: absolute;
+        width: 0;
+        height: 0;
+        border-left: 9px solid transparent;
+        border-right: 9px solid transparent;
+        border-bottom: 15px solid #ffd166;
+        opacity: 0.55;
+      }
+      .hud-arrow.offscreen { opacity: 1; border-bottom-color: #ff7b6b; }
+
+      .hud-banner, .hud-subbanner {
+        position: absolute;
+        left: 0;
+        right: 0;
+        text-align: center;
+        opacity: 0;
+        transition: opacity 120ms ease;
+        text-shadow: 0 2px 12px rgba(0, 0, 0, 0.85);
+      }
+      .hud-banner { top: 32%; font-size: 44px; letter-spacing: 0.1em; }
+      .hud-subbanner { top: 32%; margin-top: 54px; font-size: 14px; color: var(--muted); }
+      .hud-banner.visible, .hud-subbanner.visible { opacity: 1; }
+
+      /* ---------- Menus ---------- */
+      .screen {
         position: fixed;
         inset: 0;
         display: grid;
         place-items: center;
-        background: rgba(13, 17, 23, 0.82);
+        background: rgba(8, 11, 16, 0.88);
+        backdrop-filter: blur(3px);
+      }
+      .panel {
+        width: min(660px, calc(100vw - 48px));
+        max-height: calc(100vh - 48px);
+        overflow-y: auto;
+        padding: 28px 32px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
         text-align: center;
+      }
+      .title { margin: 0 0 6px; font-size: 34px; letter-spacing: 0.1em; }
+      .subtitle { margin: 0 0 20px; font-size: 13px; color: var(--muted); line-height: 1.7; }
+      .note { margin: 14px 0 0; font-size: 11px; color: var(--muted); line-height: 1.8; }
+
+      .field { display: grid; grid-template-columns: 90px 1fr; align-items: center; gap: 12px; margin: 8px 0; text-align: left; }
+      .field-label { font-size: 12px; color: var(--muted); }
+      .field-input {
+        width: 100%;
+        padding: 7px 10px;
+        background: #161b22;
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        font: inherit;
+        font-size: 13px;
+      }
+
+      .buttons { display: grid; gap: 9px; margin-top: 20px; }
+      .button {
+        padding: 11px 16px;
+        background: #21262d;
+        color: var(--ink);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        font: inherit;
+        font-size: 13px;
         cursor: pointer;
       }
-      #overlay.hidden { display: none; }
-      #overlay h1 { margin: 0 0 8px; font-size: 30px; letter-spacing: 0.06em; }
-      #overlay p { margin: 4px 0; color: #9fb0c0; font-size: 14px; }
-      #overlay kbd {
-        background: #21262d;
-        border: 1px solid #39414d;
-        border-radius: 4px;
-        padding: 1px 6px;
-        font-size: 12px;
-      }
+      .button:hover:not(:disabled) { background: #2d333b; }
+      .button.primary { background: #1f3a5f; border-color: #2f5f96; }
+      .button.primary:hover { background: #274b79; }
+      .button:disabled { opacity: 0.4; cursor: default; }
+
+      .results { margin: 14px 0; display: grid; gap: 5px; font-size: 12px; color: var(--muted); }
+      .result-row { padding: 5px 0; border-top: 1px solid var(--line); }
     </style>
   </head>
   <body>
     <canvas id="view"></canvas>
-    <div id="crosshair"></div>
     <div id="hud"></div>
-    <div id="overlay">
-      <div>
-        <h1>SKY TAG</h1>
-        <p>クリックで開始（マウスカーソルがロックされます）</p>
-        <p>
-          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移動 ・
-          <kbd>Space</kbd> 上昇 ・ <kbd>Ctrl</kbd> 下降 ・
-          <kbd>Shift</kbd> ブースト ・ マウス 視点 ・ <kbd>Esc</kbd> 解除
-        </p>
-        <p>Phase 1: 飛行とカメラのみ（射撃とルールは Phase 2）</p>
-      </div>
-    </div>
+    <div id="ui"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

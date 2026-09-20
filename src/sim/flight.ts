@@ -21,7 +21,8 @@ import {
   wrapAngle,
 } from './math.ts';
 import type { PhysicsWorld } from './physics.ts';
-import type { CollisionEvent, EntityState, PlayerInput, Vec3 } from './types.ts';
+import { applyDamage } from './damage.ts';
+import type { EntityState, PlayerInput, SimEvent, Vec3 } from './types.ts';
 
 /** Axis-aligned bounds of the playfield, including the invisible walls. */
 export interface ArenaBounds {
@@ -59,13 +60,13 @@ export interface FlightContext {
 
 /**
  * Advance one craft by `dt`. Mutates `entity`.
- * Returns a collision event when the craft crashed hard enough to be punished.
+ * Returns the events from a crash hard enough to be punished, else an empty array.
  */
 export function stepFlight(
   entity: EntityState,
   input: PlayerInput,
   ctx: FlightContext,
-): CollisionEvent | null {
+): SimEvent[] {
   const { dt, config, bounds } = ctx;
   const flight = config.flight;
   const loadout = config.loadout[entity.team];
@@ -94,9 +95,9 @@ export function stepFlight(
   const stepLen = rate * dt;
   entity.vel = deltaLen <= stepLen ? target : add(entity.vel, scale(scale(delta, 1 / deltaLen), stepLen));
 
-  const collision = sweepMove(entity, ctx);
+  const events = sweepMove(entity, ctx);
   applyBounds(entity, bounds, flight.bodyRadius);
-  return collision;
+  return events;
 }
 
 /** Movement wish in world space. Vertical thrust is world-up, not craft-up. */
@@ -120,6 +121,7 @@ function updateBoost(
   dt: number,
 ): void {
   const flight = config.flight;
+  const loadout = config.loadout[entity.team];
   const wants = input.boost && thrusting;
   // Hysteresis: re-engaging needs a minimum reserve, so a drained gauge cannot
   // stutter on and off every tick.
@@ -127,10 +129,10 @@ function updateBoost(
   entity.boosting = wants && entity.boostFuel > threshold;
 
   if (entity.boosting) {
-    entity.boostFuel = Math.max(0, entity.boostFuel - flight.boostDrain * dt);
+    entity.boostFuel = Math.max(0, entity.boostFuel - loadout.boostDrain * dt);
     if (entity.boostFuel === 0) entity.boosting = false;
   } else {
-    entity.boostFuel = Math.min(flight.boostCapacity, entity.boostFuel + flight.boostRegen * dt);
+    entity.boostFuel = Math.min(flight.boostCapacity, entity.boostFuel + loadout.boostRegen * dt);
   }
 }
 
@@ -141,7 +143,7 @@ function updateBoost(
  * makes it slide along the surface and continue with the leftover time, so
  * hugging a wall stays smooth instead of snagging every tick.
  */
-function sweepMove(entity: EntityState, ctx: FlightContext): CollisionEvent | null {
+function sweepMove(entity: EntityState, ctx: FlightContext): SimEvent[] {
   const { config, physics } = ctx;
   const flight = config.flight;
   const maxSlides = 3;
@@ -150,14 +152,14 @@ function sweepMove(entity: EntityState, ctx: FlightContext): CollisionEvent | nu
   for (let iteration = 0; iteration < maxSlides && remaining > 1e-6; iteration++) {
     const step = scale(entity.vel, remaining);
     const distance = length(step);
-    if (distance < 1e-9) return null;
+    if (distance < 1e-9) return [];
 
     const dir = scale(step, 1 / distance);
     const hit = physics.sphereCast(entity.pos, dir, distance + flight.skinWidth, flight.bodyRadius);
 
     if (!hit || hit.distance > distance) {
       entity.pos = add(entity.pos, step);
-      return null;
+      return [];
     }
 
     const travel = Math.max(0, hit.distance - flight.skinWidth);
@@ -169,16 +171,17 @@ function sweepMove(entity: EntityState, ctx: FlightContext): CollisionEvent | nu
       entity.vel = scale(entity.vel, flight.collisionRestitution);
       const damage = flight.collisionDamage;
       entity.stunTimer = flight.collisionStun;
-      entity.hp = Math.max(0, entity.hp - damage);
-      if (entity.hp === 0) entity.alive = false;
-      return {
-        type: 'collision',
-        entityId: entity.id,
-        pos: { ...entity.pos },
-        impactSpeed: closingSpeed,
-        normal: hit.normal,
-        damage,
-      };
+      return [
+        {
+          type: 'collision',
+          entityId: entity.id,
+          pos: { ...entity.pos },
+          impactSpeed: closingSpeed,
+          normal: hit.normal,
+          damage,
+        },
+        ...applyDamage(entity, damage, 'collision', null, config),
+      ];
     }
 
     // Gentle contact: project the velocity onto the surface and keep going.
@@ -186,7 +189,7 @@ function sweepMove(entity: EntityState, ctx: FlightContext): CollisionEvent | nu
     if (into < 0) entity.vel = add(entity.vel, scale(hit.normal, -into));
     remaining *= 1 - travel / distance;
   }
-  return null;
+  return [];
 }
 
 /** Invisible walls: clamp the position and kill the outward velocity component. */

@@ -10,6 +10,7 @@ import type { SkyTagConfig } from '../sim/config.ts';
 import { CONFIG } from '../sim/config.ts';
 import { clamp, wrapAngle } from '../sim/math.ts';
 import { neutralInput, type PlayerInput } from '../sim/types.ts';
+import type { InputSource } from './types.ts';
 
 export interface KeyBindings {
   forward: string[];
@@ -31,7 +32,8 @@ export const DEFAULT_BINDINGS: KeyBindings = {
   boost: ['ShiftLeft', 'ShiftRight'],
 };
 
-export class KeyboardMouseInput {
+export class KeyboardMouseInput implements InputSource {
+  readonly label = 'Keyboard + Mouse';
   private readonly held = new Set<string>();
   private readonly bindings: KeyBindings;
   private readonly config: SkyTagConfig;
@@ -53,6 +55,11 @@ export class KeyboardMouseInput {
   /** True while the browser has pointer lock, i.e. mouse look is active. */
   get pointerLocked(): boolean {
     return document.pointerLockElement === this.element;
+  }
+
+  /** Keyboard and mouse are always there; only pointer lock comes and goes. */
+  get available(): boolean {
+    return this.disposers.length > 0;
   }
 
   requestPointerLock(): void {

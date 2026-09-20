@@ -8,19 +8,31 @@
  */
 
 import { CONFIG, type SkyTagConfig } from './config.ts';
+import { createEntity } from './entity.ts';
 import { boundsFromMap, stepFlight, type ArenaBounds, type FlightContext } from './flight.ts';
 import { distance } from './math.ts';
 import { initPhysics, PhysicsWorld } from './physics.ts';
 import { Rng } from './rng.ts';
+import {
+  advanceRound,
+  beginRound,
+  checkTouch,
+  createMatchState,
+  evaluateRound,
+  recordRoundResult,
+  teamsForRound,
+  type MatchState,
+} from './rules.ts';
 import { neutralInput, type EntityState, type PlayerInput, type SimEvent, type Team, type Vec3 } from './types.ts';
+import { stepWeapon, type WeaponContext } from './weapon.ts';
 import type { MapData } from '../maps/types.ts';
 
 export interface WorldOptions {
   map: MapData;
   config?: SkyTagConfig;
   seed?: number;
-  /** Team per entity, in slot order. Defaults to one hunter and one runner. */
-  teams?: readonly Team[];
+  /** How many craft to spawn. The rules assign sides per round. */
+  slots?: number;
 }
 
 /** Serialisable copy of the whole simulation state. */
@@ -29,6 +41,7 @@ export interface WorldSnapshot {
   time: number;
   rngState: number;
   entities: EntityState[];
+  match: MatchState;
 }
 
 export class World {
@@ -37,18 +50,19 @@ export class World {
   readonly physics: PhysicsWorld;
   readonly bounds: ArenaBounds;
   readonly rng: Rng;
+  readonly slots: number;
 
   entities: EntityState[] = [];
+  match: MatchState;
   /** Ticks elapsed since the world was reset. */
   tick = 0;
   /** Seconds elapsed since the world was reset. */
   time = 0;
   /** Cleared at the start of every step; read by the renderer for effects. */
   events: SimEvent[] = [];
-  /** Driven by `rules.ts` (phase 2) to lock input during the countdown. */
-  controlEnabled = true;
+  /** Derived from `match.phase` each step: false during countdown and after the round. */
+  controlEnabled = false;
 
-  private readonly teams: readonly Team[];
   private readonly seed: number;
 
   /**
@@ -64,42 +78,53 @@ export class World {
     this.map = options.map;
     this.config = options.config ?? CONFIG;
     this.seed = options.seed ?? this.config.sim.defaultSeed;
-    this.teams = options.teams ?? (['hunter', 'runner'] as const);
+    this.slots = options.slots ?? 2;
     this.physics = new PhysicsWorld(this.map);
     this.bounds = boundsFromMap(this.map);
     this.rng = new Rng(this.seed);
+    this.match = createMatchState(this.config, this.slots);
     this.reset();
   }
 
-  /** Rebuild every entity at fresh spawn points. Re-seeds the RNG. */
+  /** Restart the whole match at round 1. Re-seeds the RNG. */
   reset(seed: number = this.seed): void {
     this.rng.restore(new Rng(seed).save());
     this.tick = 0;
     this.time = 0;
     this.events = [];
-    this.controlEnabled = true;
-
-    const spawns = this.pickSpawnPoints(this.teams.length);
-    this.entities = this.teams.map((team, i) => this.makeEntity(i, team, spawns[i]!));
+    this.match = createMatchState(this.config, this.slots);
+    this.spawnRound();
   }
 
-  private makeEntity(id: number, team: Team, pos: Vec3): EntityState {
-    const loadout = this.config.loadout[team];
-    // Face the arena centre so both craft start looking at the action.
-    const aimYaw = Math.atan2(-(0 - pos.x), -(0 - pos.z));
-    return {
-      id,
-      team,
-      pos: { ...pos },
-      vel: { x: 0, y: 0, z: 0 },
-      aimYaw,
-      aimPitch: 0,
-      hp: loadout.maxHp,
-      boostFuel: this.config.flight.boostCapacity,
-      boosting: false,
-      stunTimer: 0,
-      alive: true,
-    };
+  /**
+   * Move to the next round of a best-of-N match, swapping sides if configured.
+   * No-op once the match is decided.
+   */
+  nextRound(): boolean {
+    if (!advanceRound(this.match, this.config)) return false;
+    this.spawnRound();
+    return true;
+  }
+
+  /** Re-run the current round from its countdown. */
+  restartRound(): void {
+    beginRound(this.match, this.config);
+    this.spawnRound();
+  }
+
+  /** Drop straight into play. Used by tests and the head-less tools. */
+  skipCountdown(): void {
+    this.match.countdownRemaining = 0;
+    if (this.match.phase === 'countdown') this.match.phase = 'live';
+    this.controlEnabled = true;
+  }
+
+  /** Place fresh craft for `match.round` with that round's side assignment. */
+  private spawnRound(): void {
+    const teams = teamsForRound(this.match.round, this.config, this.slots);
+    const spawns = this.pickSpawnPoints(this.slots);
+    this.entities = teams.map((team, slot) => createEntity(slot, team, spawns[slot]!, this.config));
+    this.controlEnabled = false;
   }
 
   /**
@@ -138,24 +163,59 @@ export class World {
   step(inputs: readonly PlayerInput[] = []): SimEvent[] {
     const dt = this.config.sim.fixedDt;
     this.events = [];
+    this.advancePhase(dt);
 
-    const ctx: FlightContext = {
+    const flightCtx: FlightContext = {
       dt,
       config: this.config,
       physics: this.physics,
       bounds: this.bounds,
       controlEnabled: this.controlEnabled,
     };
+    const weaponCtx: WeaponContext = {
+      dt,
+      config: this.config,
+      physics: this.physics,
+      controlEnabled: this.controlEnabled,
+    };
 
+    // Craft keep coasting outside the live phase; only control is taken away.
     for (const entity of this.entities) {
       const input = inputs[entity.id] ?? neutralInput();
-      const collision = stepFlight(entity, input, ctx);
-      if (collision) this.events.push(collision);
+      this.events.push(...stepFlight(entity, input, flightCtx));
+    }
+    for (const entity of this.entities) {
+      const input = inputs[entity.id] ?? neutralInput();
+      this.events.push(...stepWeapon(entity, input, this.entities, weaponCtx));
+    }
+
+    if (this.match.phase === 'live') {
+      this.match.timeRemaining = Math.max(0, this.match.timeRemaining - dt);
+      this.resolveRound();
     }
 
     this.tick++;
     this.time = this.tick * dt;
     return this.events;
+  }
+
+  private advancePhase(dt: number): void {
+    if (this.match.phase === 'countdown') {
+      this.match.countdownRemaining = Math.max(0, this.match.countdownRemaining - dt);
+      if (this.match.countdownRemaining === 0) this.match.phase = 'live';
+    }
+    this.controlEnabled = this.match.phase === 'live';
+  }
+
+  private resolveRound(): void {
+    const touch = checkTouch(this.entities, this.config);
+    if (touch) this.events.push(touch);
+
+    const result = evaluateRound(this.entities, this.match.timeRemaining, this.config);
+    if (result) {
+      recordRoundResult(this.match, result, this.config);
+      this.controlEnabled = false;
+    }
   }
 
   /** Run `seconds` worth of ticks with a constant (or per-tick) input. */
@@ -172,12 +232,18 @@ export class World {
     return found;
   }
 
+  /** The craft currently playing `team`, if any is still in the round. */
+  entityByTeam(team: Team): EntityState | undefined {
+    return this.entities.find((e) => e.team === team);
+  }
+
   snapshot(): WorldSnapshot {
     return {
       tick: this.tick,
       time: this.time,
       rngState: this.rng.save(),
       entities: this.entities.map((e) => structuredClone(e)),
+      match: structuredClone(this.match),
     };
   }
 
@@ -186,6 +252,8 @@ export class World {
     this.time = snapshot.time;
     this.rng.restore(snapshot.rngState);
     this.entities = snapshot.entities.map((e) => structuredClone(e));
+    this.match = structuredClone(snapshot.match);
+    this.controlEnabled = this.match.phase === 'live';
   }
 
   dispose(): void {

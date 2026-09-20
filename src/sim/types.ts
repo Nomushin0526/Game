@@ -56,8 +56,26 @@ export interface EntityState {
   boosting: boolean;
   /** Seconds of remaining control lock-out after a crash. */
   stunTimer: number;
+  /** Gun heat in shots, 0..loadout.heatCapacity. */
+  heat: number;
+  /** True while the gun is locked out cooling off. */
+  overheated: boolean;
+  /** Seconds left of the forced overheat cool-down. */
+  cooldownRemaining: number;
+  /** Seconds until the next shot is allowed. */
+  fireCooldown: number;
+  /** Seconds since the last shot, which gates heat decay. */
+  sinceLastShot: number;
+  /** Seconds of remaining damage immunity after being hit. */
+  invulnTimer: number;
+  /** Beams fired this round, for the result screen and phase 5's player model. */
+  shotsFired: number;
+  shotsHit: number;
   alive: boolean;
 }
+
+/** What killed or hurt a craft. */
+export type DamageCause = 'beam' | 'collision';
 
 /** Emitted on the tick a craft slams into geometry. Consumed by render/audio. */
 export interface CollisionEvent {
@@ -70,7 +88,54 @@ export interface CollisionEvent {
   damage: number;
 }
 
-export type SimEvent = CollisionEvent;
+/** One beam shot. `hitEntityId` is null when it hit geometry or nothing. */
+export interface BeamEvent {
+  type: 'beam';
+  shooterId: number;
+  origin: Vec3;
+  end: Vec3;
+  hitEntityId: number | null;
+}
+
+export interface DamageEvent {
+  type: 'damage';
+  targetId: number;
+  /** The entity responsible, or null for self-inflicted crash damage. */
+  sourceId: number | null;
+  amount: number;
+  cause: DamageCause;
+  remainingHp: number;
+  pos: Vec3;
+}
+
+export interface DeathEvent {
+  type: 'death';
+  entityId: number;
+  killerId: number | null;
+  pos: Vec3;
+}
+
+/** The gun hit its heat limit and is locked out for `cooldownTime`. */
+export interface OverheatEvent {
+  type: 'overheat';
+  entityId: number;
+}
+
+/** The hunter got within `rules.touchRadius` of the runner. */
+export interface TouchEvent {
+  type: 'touch';
+  hunterId: number;
+  runnerId: number;
+  pos: Vec3;
+}
+
+export type SimEvent =
+  | CollisionEvent
+  | BeamEvent
+  | DamageEvent
+  | DeathEvent
+  | OverheatEvent
+  | TouchEvent;
 
 export const v3 = (x = 0, y = 0, z = 0): Vec3 => ({ x, y, z });
 export const cloneVec3 = (v: Vec3): Vec3 => ({ x: v.x, y: v.y, z: v.z });
