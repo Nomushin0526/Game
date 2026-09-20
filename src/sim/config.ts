@@ -39,6 +39,9 @@ export interface LoadoutConfig {
    * contact bought back roughly 25 points of bolt speed: at 90 m/s a bolt
    * outruns a boosting craft about twofold and still reads as fast, where the
    * balance previously demanded 65 and a bolt you could nearly keep pace with.
+   *
+   * Anything between about 90 and 105 measures the same once run-to-run noise
+   * is accounted for; this is the middle of that range.
    */
   projectileSpeed: number;
   /** Level-flight speed in m/s. */
@@ -421,7 +424,7 @@ export const CONFIG: SkyTagConfig = {
       heatCapacity: 20,
       cooldownTime: 3,
       range: 130,
-      projectileSpeed: 90,
+      projectileSpeed: 95,
       cruiseSpeed: 25,
       boostMultiplier: 1.95,
       boostDrain: 32,
@@ -436,7 +439,7 @@ export const CONFIG: SkyTagConfig = {
       heatCapacity: 20,
       cooldownTime: 3,
       range: 110,
-      projectileSpeed: 81,
+      projectileSpeed: 85,
       cruiseSpeed: 22,
       boostMultiplier: 1.85,
       boostDrain: 26,
