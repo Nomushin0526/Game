@@ -39,7 +39,7 @@ const pursue: Action = {
     const target = bestGuess(ctx);
     const goal = ctx.nav.steer(ctx.self.pos, target, ctx.dt);
     const shootAt = ctx.enemy && ctx.perception.acquired
-      ? aimPoint(ctx.self, ctx.enemy, ctx.tuning)
+      ? aimPoint(ctx.self, ctx.enemy, ctx.tuning, ctx.config)
       : target;
 
     return {
@@ -68,7 +68,7 @@ const duel: Action = {
     const enemy = ctx.enemy;
     if (!enemy) return { moveTo: bestGuess(ctx), lookAt: null, fire: false, boost: false };
 
-    const shootAt = aimPoint(ctx.self, enemy, ctx.tuning);
+    const shootAt = aimPoint(ctx.self, enemy, ctx.tuning, ctx.config);
     const hold = holdRange(ctx, enemy.pos, ctx.tuning.preferredRange);
 
     return {

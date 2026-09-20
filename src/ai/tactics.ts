@@ -6,32 +6,75 @@
  * by the AI's seeded RNG, so two runs of the same match play out identically.
  */
 
-import type { AiTuning } from '../sim/config.ts';
+import type { AiTuning, SkyTagConfig } from '../sim/config.ts';
 import { add, distance, dot, forwardVector, normalize, scale, sub } from '../sim/math.ts';
 import type { EntityState, Vec3 } from '../sim/types.ts';
 import type { BrainContext } from './types.ts';
 
 /** How far ahead of a target the AI is ever willing to aim, seconds. */
-const MAX_LEAD_TIME = 0.6;
+const MAX_LEAD_TIME = 1.5;
+
+/**
+ * Time for a bolt to reach a target that keeps its current velocity.
+ *
+ * Solves |r + u t| = v t for the earliest positive t, where r is the offset to
+ * the target and u its velocity. Returns null when no bolt can catch it —
+ * which is a real outcome when a boosting craft runs directly away.
+ */
+export function interceptTime(
+  from: Vec3,
+  target: Vec3,
+  targetVel: Vec3,
+  boltSpeed: number,
+): number | null {
+  const r = sub(target, from);
+  const a = dot(targetVel, targetVel) - boltSpeed * boltSpeed;
+  const b = 2 * dot(r, targetVel);
+  const c = dot(r, r);
+
+  // Target moving at exactly bolt speed degenerates to a linear equation.
+  if (Math.abs(a) < 1e-6) {
+    if (Math.abs(b) < 1e-9) return null;
+    const t = -c / b;
+    return t > 0 ? t : null;
+  }
+
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return null;
+
+  const root = Math.sqrt(discriminant);
+  const candidates = [(-b - root) / (2 * a), (-b + root) / (2 * a)].filter((t) => t > 0);
+  return candidates.length > 0 ? Math.min(...candidates) : null;
+}
 
 /**
  * Where to aim to hit a moving target.
  *
- * The gun is hit-scan, so there is no travel time to lead: what has to be
- * compensated for is the AI's own turn rate. It aims at where the target will
- * be once the swing onto it is finished, scaled by the difficulty's
- * `leadAccuracy` so that weaker CPUs under-lead and miss behind.
+ * Bolts travel, so this is a genuine interception: aim where the target will be
+ * when the bolt arrives, plus a little for the time it takes to swing the nose
+ * onto that point. `leadAccuracy` scales how much of the correct lead is
+ * actually applied, so a weak CPU shoots behind a crossing target and a strong
+ * one does not — which is what makes the difficulty tiers mean something now
+ * that distance costs accuracy.
  */
-export function aimPoint(shooter: EntityState, target: EntityState, tuning: AiTuning): Vec3 {
+export function aimPoint(
+  shooter: EntityState,
+  target: EntityState,
+  tuning: AiTuning,
+  config: SkyTagConfig,
+): Vec3 {
   const toTarget = sub(target.pos, shooter.pos);
   const range = Math.hypot(toTarget.x, toTarget.y, toTarget.z);
   if (range < 1e-3) return { ...target.pos };
 
+  const boltSpeed = config.loadout[shooter.team].projectileSpeed;
+  const flight = interceptTime(shooter.pos, target.pos, target.vel, boltSpeed);
+
   const forward = forwardVector(shooter.aimYaw, shooter.aimPitch);
   const cosAngle = Math.max(-1, Math.min(1, dot(forward, scale(toTarget, 1 / range))));
-  const swing = Math.acos(cosAngle);
+  const swing = Math.acos(cosAngle) / Math.max(tuning.turnRate, 1e-3);
 
-  const leadTime = Math.min(swing / Math.max(tuning.turnRate, 1e-3), MAX_LEAD_TIME);
+  const leadTime = Math.min((flight ?? range / boltSpeed) + swing, MAX_LEAD_TIME);
   return add(target.pos, scale(target.vel, leadTime * tuning.leadAccuracy));
 }
 
@@ -269,6 +312,42 @@ function sampleAround(ctx: BrainContext, centre: Vec3, radius: number): Vec3 {
 }
 
 const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
+
+/**
+ * Weave the destination from side to side across the line to a threat.
+ *
+ * Only worth anything against travelling bolts: a shot is aimed where the
+ * target is predicted to be when it arrives, so changing course during the
+ * flight is what makes it miss. Against hit-scan this would have done nothing.
+ *
+ * The weave is perpendicular to the threat and roughly level, so it spoils the
+ * lead without steering the runner into the ground or off its escape route.
+ */
+export function jink(ctx: BrainContext, destination: Vec3, threat: Vec3): Vec3 {
+  const { self, config, grid } = ctx;
+  const range = distance(self.pos, threat);
+  // Outside the hunter's reach there is nothing to dodge, and weaving would
+  // only cost distance.
+  const reach = config.loadout.hunter.range;
+  if (range > reach) return destination;
+
+  const toThreat = normalize(sub(threat, self.pos));
+  // Perpendicular, level with the horizon.
+  const side = normalize({ x: -toThreat.z, y: 0, z: toThreat.x });
+  if (Math.hypot(side.x, side.y, side.z) < 1e-6) return destination;
+
+  // Hardest dodging up close, where the bolt arrives soonest and the hunter is
+  // most dangerous; tapering off as the threat recedes.
+  const urgency = 1 - Math.min(1, range / reach);
+  const offset =
+    Math.sin(ctx.memory.jinkPhase * Math.PI * 2 * config.ai.jinkRate) *
+    config.ai.jinkAmplitude *
+    urgency;
+
+  const weaved = add(destination, scale(side, offset));
+  // Never weave into something solid; the straight line is better than a wall.
+  return grid.isFreeAt(weaved) && grid.lineIsFree(self.pos, weaved) ? weaved : destination;
+}
 
 /** True when this craft can legitimately take the shot right now. */
 export function canShoot(ctx: BrainContext, at: Vec3): boolean {

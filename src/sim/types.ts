@@ -68,10 +68,33 @@ export interface EntityState {
   sinceLastShot: number;
   /** Seconds of remaining damage immunity after being hit. */
   invulnTimer: number;
-  /** Beams fired this round, for the result screen and phase 5's player model. */
+  /** Bolts fired this round, for the result screen and phase 5's player model. */
   shotsFired: number;
   shotsHit: number;
   alive: boolean;
+}
+
+/**
+ * A bolt in flight.
+ *
+ * The gun fires travelling projectiles rather than resolving instantly, so
+ * distance costs accuracy: at 120 m a bolt takes long enough to arrive that a
+ * craft which changes course in the meantime is simply missed. That is what
+ * makes leading a target (DESIGN.md 7.1's 偏差射撃) a real skill rather than a
+ * cosmetic detail, and what gives an evading runner something to gain by
+ * moving unpredictably.
+ */
+export interface ProjectileState {
+  id: number;
+  /** Entity that fired it. Bolts never hit their owner. */
+  ownerId: number;
+  team: Team;
+  pos: Vec3;
+  /** Constant: bolts fly straight and do not drop. */
+  vel: Vec3;
+  /** Seconds of flight left before it fizzles out at maximum range. */
+  life: number;
+  damage: number;
 }
 
 /** What killed or hurt a craft. */
@@ -88,13 +111,27 @@ export interface CollisionEvent {
   damage: number;
 }
 
-/** One beam shot. `hitEntityId` is null when it hit geometry or nothing. */
-export interface BeamEvent {
-  type: 'beam';
+/** A bolt left the muzzle. For the flash and the sound. */
+export interface FireEvent {
+  type: 'fire';
   shooterId: number;
+  projectileId: number;
   origin: Vec3;
-  end: Vec3;
+  dir: Vec3;
+}
+
+/**
+ * A bolt stopped flying: it struck a craft, struck geometry, or ran out of
+ * range. `hitEntityId` is null for anything that is not a craft.
+ */
+export interface ProjectileHitEvent {
+  type: 'projectileHit';
+  projectileId: number;
+  ownerId: number;
+  pos: Vec3;
   hitEntityId: number | null;
+  /** True when the bolt simply expired at maximum range. */
+  expired: boolean;
 }
 
 export interface DamageEvent {
@@ -131,7 +168,8 @@ export interface TouchEvent {
 
 export type SimEvent =
   | CollisionEvent
-  | BeamEvent
+  | FireEvent
+  | ProjectileHitEvent
   | DamageEvent
   | DeathEvent
   | OverheatEvent

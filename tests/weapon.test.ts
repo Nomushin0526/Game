@@ -1,9 +1,21 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { CONFIG, cloneConfig } from '../src/sim/config.ts';
 import { createEntity } from '../src/sim/entity.ts';
+import { raySphere } from '../src/sim/math.ts';
 import { initPhysics, PhysicsWorld } from '../src/sim/physics.ts';
-import { neutralInput, type BeamEvent, type DamageEvent, type EntityState, type PlayerInput, type SimEvent, type Vec3 } from '../src/sim/types.ts';
-import { raySphere, stepWeapon, type WeaponContext } from '../src/sim/weapon.ts';
+import { spawnProjectile, stepProjectiles, type ProjectileContext } from '../src/sim/projectile.ts';
+import {
+  neutralInput,
+  type DamageEvent,
+  type EntityState,
+  type FireEvent,
+  type PlayerInput,
+  type ProjectileHitEvent,
+  type ProjectileState,
+  type SimEvent,
+  type Vec3,
+} from '../src/sim/types.ts';
+import { stepWeapon, type WeaponContext } from '../src/sim/weapon.ts';
 import type { MapData } from '../src/maps/types.ts';
 
 /** Open air with a single wall standing at x = 0, spanning z = -20..20. */
@@ -29,12 +41,9 @@ beforeAll(async () => {
   physics = new PhysicsWorld(MAP);
 });
 
-function ctx(config = CONFIG): WeaponContext {
-  return { dt: config.sim.fixedDt, config, physics, controlEnabled: true };
-}
-
-/** Yaw that faces +X, i.e. along the positive X axis. */
+/** Yaw that faces +X. */
 const FACE_PLUS_X = -Math.PI / 2;
+const firing: PlayerInput = { ...neutralInput(), fire: true, aimYaw: FACE_PLUS_X };
 
 function shooter(pos: Vec3, team: 'hunter' | 'runner' = 'hunter', config = CONFIG): EntityState {
   return createEntity(0, team, pos, config, { aimYaw: FACE_PLUS_X, aimPitch: 0 });
@@ -44,24 +53,59 @@ function target(pos: Vec3, team: 'hunter' | 'runner' = 'runner', config = CONFIG
   return createEntity(1, team, pos, config);
 }
 
-const firing: PlayerInput = { ...neutralInput(), fire: true, aimYaw: FACE_PLUS_X };
+/**
+ * A miniature world: run the gun and the bolts it produces, the same way
+ * `World.step` does, so a test exercises the whole firing path.
+ */
+class Range {
+  readonly projectiles: ProjectileState[] = [];
+  readonly events: SimEvent[] = [];
+  private nextId = 1;
 
-/** Hold the trigger for `seconds` and collect everything that came out. */
-function hold(
-  s: EntityState,
-  others: EntityState[],
-  seconds: number,
-  context = ctx(),
-  cmd: PlayerInput = firing,
-): SimEvent[] {
-  const events: SimEvent[] = [];
-  for (let i = 0; i < Math.round(seconds * context.config.sim.tickRate); i++) {
-    events.push(...stepWeapon(s, cmd, others, context));
+  constructor(readonly config = CONFIG) {}
+
+  private get weaponCtx(): WeaponContext {
+    return {
+      dt: this.config.sim.fixedDt,
+      config: this.config,
+      controlEnabled: true,
+      spawn: (p) => this.projectiles.push(p),
+      nextProjectileId: () => this.nextId++,
+    };
   }
-  return events;
+
+  private get projectileCtx(): ProjectileContext {
+    return { dt: this.config.sim.fixedDt, config: this.config, physics };
+  }
+
+  /** Hold the trigger for `seconds`, stepping bolts alongside. */
+  run(craft: EntityState, others: EntityState[], seconds: number, cmd: PlayerInput = firing): SimEvent[] {
+    const produced: SimEvent[] = [];
+    const ticks = Math.round(seconds * this.config.sim.tickRate);
+    for (let i = 0; i < ticks; i++) {
+      produced.push(...stepWeapon(craft, cmd, this.weaponCtx));
+      const flown = stepProjectiles(this.projectiles, [craft, ...others], this.projectileCtx);
+      this.projectiles.length = 0;
+      this.projectiles.push(...flown.survivors);
+      produced.push(...flown.events);
+    }
+    this.events.push(...produced);
+    return produced;
+  }
 }
 
-const beams = (events: SimEvent[]) => events.filter((e): e is BeamEvent => e.type === 'beam');
+/**
+ * Seconds for a bolt to cross `metres`, plus a tick of slack.
+ * Derived rather than hard-coded so these tests keep meaning the same thing
+ * when the balance numbers are retuned.
+ */
+function flightTime(metres: number, team: 'hunter' | 'runner' = 'hunter', config = CONFIG): number {
+  return metres / config.loadout[team].projectileSpeed + 2 * config.sim.fixedDt;
+}
+
+const fires = (events: SimEvent[]) => events.filter((e): e is FireEvent => e.type === 'fire');
+const hits = (events: SimEvent[]) =>
+  events.filter((e): e is ProjectileHitEvent => e.type === 'projectileHit');
 const damage = (events: SimEvent[]) => events.filter((e): e is DamageEvent => e.type === 'damage');
 
 describe('raySphere', () => {
@@ -89,182 +133,197 @@ describe('raySphere', () => {
   });
 });
 
-describe('weapon', () => {
-  it('fires on the trigger and emits a beam', () => {
+describe('firing', () => {
+  it('puts a bolt in the air on the trigger', () => {
+    const range = new Range();
     const s = shooter({ x: -150, y: 60, z: 100 });
-    const events = beams(hold(s, [], CONFIG.sim.fixedDt));
-    expect(events).toHaveLength(1);
-    expect(events[0]!.shooterId).toBe(0);
-    expect(events[0]!.hitEntityId).toBeNull();
+    const events = range.run(s, [], CONFIG.sim.fixedDt);
+
+    expect(fires(events)).toHaveLength(1);
     expect(s.shotsFired).toBe(1);
+    expect(range.projectiles).toHaveLength(1);
+
+    const bolt = range.projectiles[0]!;
+    expect(bolt.ownerId).toBe(0);
+    expect(bolt.damage).toBe(CONFIG.loadout.hunter.damage);
+    expect(bolt.vel.x).toBeCloseTo(CONFIG.loadout.hunter.projectileSpeed, 3);
   });
 
   it('respects the per-team fire interval', () => {
-    const hunterShots = beams(hold(shooter({ x: -150, y: 60, z: 100 }, 'hunter'), [], 1)).length;
-    const runnerShots = beams(hold(shooter({ x: -150, y: 60, z: 110 }, 'runner'), [], 1)).length;
-    // 1 s at 0.18 s and 0.22 s intervals.
+    const hunterShots = fires(new Range().run(shooter({ x: -150, y: 60, z: 100 }, 'hunter'), [], 1)).length;
+    const runnerShots = fires(new Range().run(shooter({ x: -150, y: 60, z: 110 }, 'runner'), [], 1)).length;
     expect(hunterShots).toBe(Math.floor(1 / CONFIG.loadout.hunter.fireInterval) + 1);
     expect(runnerShots).toBe(Math.floor(1 / CONFIG.loadout.runner.fireInterval) + 1);
     expect(hunterShots).toBeGreaterThan(runnerShots);
   });
 
-  it('does not fire without the trigger, while stunned, or when control is off', () => {
-    expect(beams(hold(shooter({ x: -150, y: 60, z: 100 }), [], 1, ctx(), neutralInput()))).toHaveLength(0);
+  it('does not fire without the trigger, while stunned, dead, or when control is off', () => {
+    expect(fires(new Range().run(shooter({ x: -150, y: 60, z: 100 }), [], 1, neutralInput()))).toHaveLength(0);
 
     const stunned = shooter({ x: -150, y: 60, z: 100 });
     stunned.stunTimer = 5;
-    expect(beams(hold(stunned, [], 1))).toHaveLength(0);
-
-    const locked = { ...ctx(), controlEnabled: false };
-    expect(beams(hold(shooter({ x: -150, y: 60, z: 100 }), [], 1, locked))).toHaveLength(0);
+    expect(fires(new Range().run(stunned, [], 1))).toHaveLength(0);
 
     const dead = shooter({ x: -150, y: 60, z: 100 });
     dead.alive = false;
-    expect(beams(hold(dead, [], 1))).toHaveLength(0);
+    expect(fires(new Range().run(dead, [], 1))).toHaveLength(0);
   });
 
-  it('hits an enemy in the line of fire and takes the right damage off', () => {
-    const s = shooter({ x: -50, y: 60, z: 100 }, 'hunter');
-    const t = target({ x: -10, y: 60, z: 100 });
-    const events = hold(s, [t], CONFIG.sim.fixedDt);
-
-    expect(beams(events)[0]!.hitEntityId).toBe(1);
-    const hit = damage(events)[0]!;
-    expect(hit.targetId).toBe(1);
-    expect(hit.sourceId).toBe(0);
-    expect(hit.cause).toBe('beam');
-    expect(hit.amount).toBe(CONFIG.loadout.hunter.damage);
-    expect(t.hp).toBe(CONFIG.loadout.runner.maxHp - CONFIG.loadout.hunter.damage);
-    expect(s.shotsHit).toBe(1);
-  });
-
-  it('gives the hunter the harder-hitting gun', () => {
-    expect(CONFIG.loadout.hunter.damage).toBeGreaterThan(CONFIG.loadout.runner.damage);
-
-    const hunterTarget = target({ x: -10, y: 60, z: 100 }, 'runner');
-    hold(shooter({ x: -50, y: 60, z: 100 }, 'hunter'), [hunterTarget], CONFIG.sim.fixedDt);
-
-    const runnerTarget = createEntity(1, 'hunter', { x: -10, y: 60, z: 140 }, CONFIG);
-    hold(shooter({ x: -50, y: 60, z: 140 }, 'runner'), [runnerTarget], CONFIG.sim.fixedDt);
-
-    expect(hunterTarget.hp).toBeLessThan(runnerTarget.hp);
-  });
-
-  it('cannot shoot through a wall', () => {
-    // Shooter at x = -20 facing +X, target at x = +20, wall across x = 0.
-    const s = shooter({ x: -20, y: 60, z: 0 }, 'hunter');
-    const t = target({ x: 20, y: 60, z: 0 });
-    const events = hold(s, [t], CONFIG.sim.fixedDt);
-
-    expect(beams(events)[0]!.hitEntityId).toBeNull();
-    expect(damage(events)).toHaveLength(0);
-    expect(t.hp).toBe(CONFIG.loadout.runner.maxHp);
-    // The beam stops at the wall face, not at the target.
-    expect(beams(events)[0]!.end.x).toBeCloseTo(-1, 1);
-  });
-
-  it('cannot hit past its range', () => {
-    const range = CONFIG.loadout.hunter.range;
-    const s = shooter({ x: -150, y: 60, z: 100 }, 'hunter');
-    const far = target({ x: -150 + range + 10, y: 60, z: 100 });
-    expect(beams(hold(s, [far], CONFIG.sim.fixedDt))[0]!.hitEntityId).toBeNull();
-
-    const near = target({ x: -150 + range - 10, y: 60, z: 100 });
-    const fresh = shooter({ x: -150, y: 60, z: 100 }, 'hunter');
-    expect(beams(hold(fresh, [near], CONFIG.sim.fixedDt))[0]!.hitEntityId).toBe(1);
-  });
-
-  it('never hits a craft that is already down', () => {
-    const s = shooter({ x: -50, y: 60, z: 100 }, 'hunter');
-    const t = target({ x: -10, y: 60, z: 100 });
-    t.alive = false;
-    expect(beams(hold(s, [t], CONFIG.sim.fixedDt))[0]!.hitEntityId).toBeNull();
-  });
-
-  it('kills a craft whose HP reaches zero', () => {
-    const s = shooter({ x: -50, y: 60, z: 100 }, 'hunter');
-    const t = target({ x: -10, y: 60, z: 100 });
-    t.hp = CONFIG.loadout.hunter.damage;
-    const events = hold(s, [t], CONFIG.sim.fixedDt);
-
-    expect(t.alive).toBe(false);
-    expect(t.hp).toBe(0);
-    expect(events.some((e) => e.type === 'death' && e.entityId === 1)).toBe(true);
-  });
-
-  it('overheats after heatCapacity shots held down, then recovers', () => {
+  it('overheats on a sustained burst, then recovers', () => {
     const config = cloneConfig();
-    config.weapon.heatDecay = 0; // isolate the burst limit from the decay
+    config.weapon.heatDecay = 0;
+    const range = new Range(config);
     const s = shooter({ x: -150, y: 60, z: 100 }, 'hunter', config);
     const loadout = config.loadout.hunter;
 
-    const burst = hold(s, [], loadout.fireInterval * loadout.heatCapacity, ctx(config));
-    expect(beams(burst)).toHaveLength(loadout.heatCapacity);
+    const burst = range.run(s, [], loadout.fireInterval * loadout.heatCapacity);
+    expect(fires(burst)).toHaveLength(loadout.heatCapacity);
     expect(s.overheated).toBe(true);
-    expect(burst.some((e) => e.type === 'overheat')).toBe(true);
 
-    // Locked out for the whole cool-down, whatever the trigger is doing.
-    const locked = hold(s, [], loadout.cooldownTime - 0.1, ctx(config));
-    expect(beams(locked)).toHaveLength(0);
-
-    hold(s, [], 0.2, ctx(config), neutralInput());
+    expect(fires(range.run(s, [], loadout.cooldownTime - 0.1))).toHaveLength(0);
+    range.run(s, [], 0.2, neutralInput());
     expect(s.overheated).toBe(false);
-    expect(s.heat).toBe(0);
-    expect(beams(hold(s, [], config.sim.fixedDt, ctx(config)))).toHaveLength(1);
+    expect(fires(range.run(s, [], config.sim.fixedDt))).toHaveLength(1);
+  });
+});
+
+describe('bolts in flight', () => {
+  it('travels at the loadout speed and takes real time to arrive', () => {
+    const range = new Range();
+    const s = shooter({ x: -100, y: 60, z: 100 }, 'hunter');
+    const t = target({ x: 0, y: 60, z: 100 });
+
+    // One tick to fire; the bolt is still short of a target 100 m away.
+    range.run(s, [t], CONFIG.sim.fixedDt);
+    expect(t.hp).toBe(CONFIG.loadout.runner.maxHp);
+    expect(range.projectiles[0]!.pos.x).toBeLessThan(-90);
+
+    const events = range.run(s, [t], flightTime(100), neutralInput());
+    expect(damage(events).length).toBeGreaterThan(0);
+    expect(t.hp).toBe(CONFIG.loadout.runner.maxHp - CONFIG.loadout.hunter.damage);
   });
 
-  it('overheats on a sustained burst with the shipped numbers', () => {
-    const s = shooter({ x: -150, y: 60, z: 100 }, 'hunter');
-    const loadout = CONFIG.loadout.hunter;
-    // Holding the trigger must reach the limit in about heatCapacity shots,
-    // never mind the idle ticks between them waiting on fireInterval.
-    hold(s, [], loadout.fireInterval * loadout.heatCapacity + 0.05);
-    expect(s.overheated).toBe(true);
-    expect(s.shotsFired).toBe(loadout.heatCapacity);
+  it('credits the hit to the craft that fired it', () => {
+    const range = new Range();
+    const s = shooter({ x: -60, y: 60, z: 100 }, 'hunter');
+    const t = target({ x: 0, y: 60, z: 100 });
+    range.run(s, [t], flightTime(60));
+
+    expect(s.shotsHit).toBeGreaterThan(0);
+    const hit = damage(range.events)[0]!;
+    expect(hit.targetId).toBe(1);
+    expect(hit.sourceId).toBe(0);
+    expect(hit.cause).toBe('beam');
   });
 
-  it('does not decay heat in the gaps inside a burst', () => {
-    const s = shooter({ x: -150, y: 60, z: 100 }, 'hunter');
-    hold(s, [], CONFIG.loadout.hunter.fireInterval * 5);
-    // Five shots in, five shots of heat: nothing bled off between them.
-    expect(s.heat).toBe(5);
+  it('gives the hunter the harder-hitting, faster bolt', () => {
+    expect(CONFIG.loadout.hunter.damage).toBeGreaterThan(CONFIG.loadout.runner.damage);
+    expect(CONFIG.loadout.hunter.projectileSpeed).toBeGreaterThan(CONFIG.loadout.runner.projectileSpeed);
   });
 
-  it('bleeds heat off between bursts so short taps never overheat', () => {
+  it('stops at a wall instead of passing through it', () => {
+    const range = new Range();
+    const s = shooter({ x: -40, y: 60, z: 0 }, 'hunter');
+    const t = target({ x: 40, y: 60, z: 0 });
+    const events = range.run(s, [t], flightTime(80));
+
+    expect(t.hp).toBe(CONFIG.loadout.runner.maxHp);
+    const wallHits = hits(events).filter((h) => !h.expired && h.hitEntityId === null);
+    expect(wallHits.length).toBeGreaterThan(0);
+    // The wall's near face is at x = -1.
+    expect(wallHits[0]!.pos.x).toBeLessThan(0);
+  });
+
+  it('expires at its maximum range', () => {
+    const range = new Range();
     const s = shooter({ x: -150, y: 60, z: 100 }, 'hunter');
-    for (let i = 0; i < 10; i++) {
-      hold(s, [], 0.4); // ~3 shots
-      hold(s, [], 2.0, ctx(), neutralInput()); // long enough to fully recover
+    const lifetime = CONFIG.loadout.hunter.range / CONFIG.loadout.hunter.projectileSpeed;
+
+    // Where the bolt was spawned, before its first tick of travel.
+    const muzzle = s.pos.x + CONFIG.weapon.muzzleOffset;
+    range.run(s, [], CONFIG.sim.fixedDt);
+    const events = range.run(s, [], lifetime + 0.1, neutralInput());
+    const expired = hits(events).filter((h) => h.expired);
+    expect(expired).toHaveLength(1);
+    // Range is measured from the muzzle, and it stops exactly there rather
+    // than overshooting by whatever is left of the final tick.
+    expect(expired[0]!.pos.x - muzzle).toBeCloseTo(CONFIG.loadout.hunter.range, 3);
+    expect(range.projectiles).toHaveLength(0);
+  });
+
+  it('never hits the craft that fired it', () => {
+    const range = new Range();
+    const s = shooter({ x: -150, y: 60, z: 100 }, 'hunter');
+    range.run(s, [], 1);
+    expect(s.hp).toBe(CONFIG.loadout.hunter.maxHp);
+    expect(damage(range.events)).toHaveLength(0);
+  });
+
+  it('never hits a craft that is already down', () => {
+    const range = new Range();
+    const s = shooter({ x: -60, y: 60, z: 100 }, 'hunter');
+    const t = target({ x: 0, y: 60, z: 100 });
+    t.alive = false;
+    range.run(s, [t], flightTime(60));
+    expect(damage(range.events)).toHaveLength(0);
+  });
+
+  it('cannot be outrun by a stationary target it has already passed', () => {
+    // A bolt sweeps rather than samples: at 185 m/s it covers 3 m per tick,
+    // which is wider than a craft, so a point test would shoot straight through.
+    const ctx: ProjectileContext = { dt: CONFIG.sim.fixedDt, config: CONFIG, physics };
+    const s = shooter({ x: -60, y: 60, z: 100 });
+    const t = target({ x: 0, y: 60, z: 100 });
+    const bolt = spawnProjectile(1, s, { x: 1, y: 0, z: 0 }, CONFIG);
+
+    let live = [bolt];
+    let struck = false;
+    for (let i = 0; i < 240 && live.length > 0; i++) {
+      const result = stepProjectiles(live, [s, t], ctx);
+      live = result.survivors;
+      if (result.events.some((e) => e.type === 'projectileHit' && e.hitEntityId === 1)) struck = true;
     }
-    expect(s.overheated).toBe(false);
-    expect(s.heat).toBe(0);
-    expect(s.shotsFired).toBeGreaterThan(CONFIG.loadout.hunter.heatCapacity);
+    expect(struck).toBe(true);
+    expect(t.hp).toBeLessThan(CONFIG.loadout.runner.maxHp);
   });
 
-  it('waits heatDecayDelay after the last shot before recovering', () => {
-    const s = shooter({ x: -150, y: 60, z: 100 }, 'hunter');
-    hold(s, [], CONFIG.sim.fixedDt); // exactly one shot
-    expect(s.heat).toBe(1);
-    expect(s.sinceLastShot).toBe(0);
+  it('kills a craft whose HP reaches zero', () => {
+    const range = new Range();
+    const s = shooter({ x: -60, y: 60, z: 100 }, 'hunter');
+    const t = target({ x: 0, y: 60, z: 100 });
+    t.hp = CONFIG.loadout.hunter.damage;
+    const events = range.run(s, [t], flightTime(60));
 
-    // Still inside the grace window: nothing has bled off yet.
-    hold(s, [], CONFIG.weapon.heatDecayDelay - 0.1, ctx(), neutralInput());
-    expect(s.heat).toBe(1);
-
-    hold(s, [], 0.5, ctx(), neutralInput());
-    expect(s.heat).toBeLessThan(1);
+    expect(t.alive).toBe(false);
+    expect(events.some((e) => e.type === 'death' && e.entityId === 1)).toBe(true);
   });
 
   it('honours invulnerability when it is switched on', () => {
     const config = cloneConfig();
     config.rules.hitInvulnerability = 0.5;
-    const s = shooter({ x: -50, y: 60, z: 100 }, 'hunter', config);
-    const t = target({ x: -10, y: 60, z: 100 }, 'runner', config);
+    const range = new Range(config);
+    const s = shooter({ x: -40, y: 60, z: 100 }, 'hunter', config);
+    const t = target({ x: 0, y: 60, z: 100 }, 'runner', config);
 
-    const events = hold(s, [t], 0.5, ctx(config));
-    // Several beams land, but only the first one gets through.
-    expect(beams(events).filter((b) => b.hitEntityId === 1).length).toBeGreaterThan(1);
+    const events = range.run(s, [t], flightTime(40, 'hunter', config) + 0.5);
+    expect(hits(events).filter((h) => h.hitEntityId === 1).length).toBeGreaterThan(1);
     expect(damage(events)).toHaveLength(1);
-    expect(t.hp).toBe(config.loadout.runner.maxHp - config.loadout.hunter.damage);
+  });
+
+  it('lets a craft outrun a bolt aimed where it used to be', () => {
+    // The whole point of travelling bolts: a shot at a stationary point misses
+    // a target that has moved on by the time it arrives.
+    const ctx: ProjectileContext = { dt: CONFIG.sim.fixedDt, config: CONFIG, physics };
+    const s = shooter({ x: -120, y: 60, z: 100 });
+    const t = target({ x: 0, y: 60, z: 100 });
+    const bolt = spawnProjectile(1, s, { x: 1, y: 0, z: 0 }, CONFIG);
+
+    let live = [bolt];
+    for (let i = 0; i < 240 && live.length > 0; i++) {
+      // The target sidesteps at cruise speed while the bolt is in the air.
+      t.pos.z += CONFIG.loadout.runner.cruiseSpeed * CONFIG.sim.fixedDt;
+      live = stepProjectiles(live, [s, t], ctx).survivors;
+    }
+    expect(t.hp).toBe(CONFIG.loadout.runner.maxHp);
   });
 });

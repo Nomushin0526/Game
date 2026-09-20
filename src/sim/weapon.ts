@@ -1,34 +1,34 @@
 /**
- * The beam gun: hit-scan, per-team damage, and heat management.
+ * The beam gun: trigger, heat management, and putting bolts in the air.
  *
- * A shot is resolved the instant it is fired. The ray is tested against every
- * other craft and against the world; the nearest of the two wins, so cover
- * genuinely blocks fire rather than being shot through.
+ * Firing spawns a projectile rather than resolving a hit immediately. Whether
+ * it connects is decided later, in `projectile.ts`, once the bolt has flown —
+ * so the shot is aimed at where the target is going to be, not where it is.
  */
 
 import type { SkyTagConfig } from './config.ts';
 import { entityForward } from './flight.ts';
-import { add, dot, scale, sub } from './math.ts';
-import type { PhysicsWorld } from './physics.ts';
-import { applyDamage } from './damage.ts';
-import type { EntityState, PlayerInput, SimEvent, Vec3 } from './types.ts';
+import { spawnProjectile } from './projectile.ts';
+import type { EntityState, PlayerInput, ProjectileState, SimEvent } from './types.ts';
 
 export interface WeaponContext {
   dt: number;
   config: SkyTagConfig;
-  physics: PhysicsWorld;
   /** False during the countdown and after the round is decided. */
   controlEnabled: boolean;
+  /** Called with each bolt the gun puts in the air. */
+  spawn: (projectile: ProjectileState) => void;
+  /** Supplies the id for the next bolt. */
+  nextProjectileId: () => number;
 }
 
 /**
- * Advance one craft's gun by `dt` and resolve a shot if it fired.
- * Mutates `shooter` and, on a hit, the craft it hit.
+ * Advance one craft's gun by `dt` and launch a bolt if it fired.
+ * Mutates `shooter`; hits are resolved later by `stepProjectiles`.
  */
 export function stepWeapon(
   shooter: EntityState,
   input: PlayerInput,
-  others: readonly EntityState[],
   ctx: WeaponContext,
 ): SimEvent[] {
   const { dt, config } = ctx;
@@ -68,7 +68,7 @@ export function stepWeapon(
     events.push({ type: 'overheat', entityId: shooter.id });
   }
 
-  events.push(...resolveShot(shooter, others, ctx));
+  events.push(...launch(shooter, ctx));
   return events;
 }
 
@@ -82,63 +82,19 @@ function canFire(shooter: EntityState, input: PlayerInput, ctx: WeaponContext): 
   );
 }
 
-/** Trace the beam and apply damage to whatever it reaches first. */
-function resolveShot(
-  shooter: EntityState,
-  others: readonly EntityState[],
-  ctx: WeaponContext,
-): SimEvent[] {
-  const { config, physics } = ctx;
-  const loadout = config.loadout[shooter.team];
+/** Put a bolt in the air along the craft's current aim. */
+function launch(shooter: EntityState, ctx: WeaponContext): SimEvent[] {
   const dir = entityForward(shooter);
-  const origin = add(shooter.pos, scale(dir, config.weapon.muzzleOffset));
+  const projectile = spawnProjectile(ctx.nextProjectileId(), shooter, dir, ctx.config);
+  ctx.spawn(projectile);
 
-  // Geometry first: it caps how far the beam can possibly reach.
-  const geometryHit = physics.raycast(origin, dir, loadout.range);
-  let reach = geometryHit ? geometryHit.distance : loadout.range;
-  let victim: EntityState | null = null;
-
-  for (const other of others) {
-    if (other.id === shooter.id || !other.alive) continue;
-    const t = raySphere(origin, dir, other.pos, config.weapon.hitRadius, reach);
-    if (t === null) continue;
-    reach = t;
-    victim = other;
-  }
-
-  const end: Vec3 = add(origin, scale(dir, reach));
-  const events: SimEvent[] = [
-    { type: 'beam', shooterId: shooter.id, origin, end, hitEntityId: victim?.id ?? null },
+  return [
+    {
+      type: 'fire',
+      shooterId: shooter.id,
+      projectileId: projectile.id,
+      origin: { ...projectile.pos },
+      dir,
+    },
   ];
-
-  if (victim) {
-    shooter.shotsHit++;
-    events.push(...applyDamage(victim, loadout.damage, 'beam', shooter.id, config));
-  }
-  return events;
-}
-
-/**
- * Distance along the ray to the first intersection with a sphere, or null.
- * Only hits in front of the origin and within `maxDistance` count.
- */
-export function raySphere(
-  origin: Vec3,
-  dir: Vec3,
-  center: Vec3,
-  radius: number,
-  maxDistance: number,
-): number | null {
-  const toCenter = sub(center, origin);
-  const along = dot(toCenter, dir);
-  const distanceSq = dot(toCenter, toCenter) - along * along;
-  const radiusSq = radius * radius;
-  if (distanceSq > radiusSq) return null;
-
-  const half = Math.sqrt(radiusSq - distanceSq);
-  // Near intersection first; if we start inside the sphere, use the entry point 0.
-  const near = along - half;
-  const t = near >= 0 ? near : along + half >= 0 ? 0 : null;
-  if (t === null || t > maxDistance) return null;
-  return t;
 }

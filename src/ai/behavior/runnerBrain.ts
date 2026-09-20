@@ -7,7 +7,7 @@
 
 import { distance } from '../../sim/math.ts';
 import type { Vec3 } from '../../sim/types.ts';
-import { aimPoint, canShoot, findClutter, findCover, findEscape, sampleArena } from '../tactics.ts';
+import { aimPoint, canShoot, findClutter, findCover, findEscape, jink, sampleArena } from '../tactics.ts';
 import { holdRange } from './hunterBrain.ts';
 import type { Action, Brain, BrainContext, Intent } from '../types.ts';
 
@@ -61,7 +61,7 @@ const evade: Action = {
     if (stale) ctx.memory.escapeTarget = findEscape(ctx, threat, 110);
 
     return {
-      moveTo: ctx.nav.steer(ctx.self.pos, ctx.memory.escapeTarget!, ctx.dt),
+      moveTo: jink(ctx, ctx.nav.steer(ctx.self.pos, ctx.memory.escapeTarget!, ctx.dt), threat),
       lookAt: watchThreat(ctx, ctx.memory.escapeTarget!),
       fire: false,
       boost: true,
@@ -110,7 +110,7 @@ const hide: Action = {
     }
 
     return {
-      moveTo: ctx.nav.steer(ctx.self.pos, ctx.memory.coverSpot!, ctx.dt),
+      moveTo: jink(ctx, ctx.nav.steer(ctx.self.pos, ctx.memory.coverSpot!, ctx.dt), threat),
       lookAt: watchThreat(ctx, ctx.memory.coverSpot!),
       fire: false,
       // Reaching cover before the hunter closes is the whole move, so spend
@@ -136,7 +136,7 @@ const fight: Action = {
     const enemy = ctx.enemy;
     if (!enemy) return goToGround(ctx);
 
-    const shootAt = aimPoint(ctx.self, enemy, ctx.tuning);
+    const shootAt = aimPoint(ctx.self, enemy, ctx.tuning, ctx.config);
     return {
       moveTo: ctx.nav.steer(ctx.self.pos, holdRange(ctx, enemy.pos, ctx.tuning.preferredRange), ctx.dt),
       lookAt: shootAt,
@@ -165,7 +165,7 @@ const kite: Action = {
     const enemy = ctx.enemy;
     if (!enemy) return goToGround(ctx);
 
-    const shootAt = aimPoint(ctx.self, enemy, ctx.tuning);
+    const shootAt = aimPoint(ctx.self, enemy, ctx.tuning, ctx.config);
     if (!ctx.memory.escapeTarget || distance(ctx.self.pos, ctx.memory.escapeTarget) < 25) {
       ctx.memory.escapeTarget = findEscape(ctx, enemy.pos, 100);
     }
@@ -173,7 +173,7 @@ const kite: Action = {
     return {
       // Flying away while aiming back is exactly what the local move frame
       // is for: the controller resolves it into reverse thrust.
-      moveTo: ctx.nav.steer(ctx.self.pos, ctx.memory.escapeTarget, ctx.dt),
+      moveTo: jink(ctx, ctx.nav.steer(ctx.self.pos, ctx.memory.escapeTarget, ctx.dt), enemy.pos),
       lookAt: shootAt,
       fire: ctx.perception.acquired && canShoot(ctx, shootAt),
       boost: true,

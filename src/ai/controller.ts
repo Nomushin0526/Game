@@ -108,6 +108,7 @@ export class AiController implements InputSource {
 
     this.perception.update(self, enemy, this.world.physics, this.config, this.tuning, dt);
     this.memory.coverCommit = Math.max(0, this.memory.coverCommit - dt);
+    this.memory.jinkPhase += dt;
 
     const ctx: BrainContext = {
       self,

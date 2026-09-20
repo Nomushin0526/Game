@@ -63,3 +63,28 @@ export function wrapAngle(a: number): number {
 export function angleDelta(from: number, to: number): number {
   return wrapAngle(to - from);
 }
+
+/**
+ * Distance along the ray to the first intersection with a sphere, or null.
+ * Only hits in front of the origin and within `maxDistance` count.
+ */
+export function raySphere(
+  origin: Vec3,
+  dir: Vec3,
+  center: Vec3,
+  radius: number,
+  maxDistance: number,
+): number | null {
+  const toCenter = sub(center, origin);
+  const along = dot(toCenter, dir);
+  const distanceSq = dot(toCenter, toCenter) - along * along;
+  const radiusSq = radius * radius;
+  if (distanceSq > radiusSq) return null;
+
+  const half = Math.sqrt(radiusSq - distanceSq);
+  // Near intersection first; if we start inside the sphere, use the entry point 0.
+  const near = along - half;
+  const t = near >= 0 ? near : along + half >= 0 ? 0 : null;
+  if (t === null || t > maxDistance) return null;
+  return t;
+}

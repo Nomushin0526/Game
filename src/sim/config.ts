@@ -28,8 +28,18 @@ export interface LoadoutConfig {
   heatCapacity: number;
   /** Seconds of forced cool-down once overheated. */
   cooldownTime: number;
-  /** Hit-scan range in metres. */
+  /** Maximum distance a bolt travels before it fizzles out, metres. */
   range: number;
+  /**
+   * Bolt speed, metres per second.
+   *
+   * The ratio of this to craft speed is what decides how much distance costs
+   * accuracy, and it turned out to be the only setting that moves the balance
+   * at all — see the measurements in README.md. At roughly twice a boosting
+   * craft's speed a bolt still reads as fast, while taking long enough over
+   * 100 m that a target which changes course is genuinely missed.
+   */
+  projectileSpeed: number;
   /** Level-flight speed in m/s. */
   cruiseSpeed: number;
   /** Speed multiplier while boosting. */
@@ -43,6 +53,8 @@ export interface LoadoutConfig {
 export interface WeaponConfig {
   /** Radius of the hittable sphere around a craft, metres. */
   hitRadius: number;
+  /** Radius of a bolt, added to the target's hit radius on impact. */
+  projectileRadius: number;
   /**
    * Heat bled off per second once the gun has been idle, in shots.
    *
@@ -177,6 +189,10 @@ export interface AiConfig {
   actionHysteresis: number;
   /** Cap on A* node expansions per search, so one call cannot stall a tick. */
   maxPathNodes: number;
+  /** Sideways amplitude of evasive weaving under fire, metres. */
+  jinkAmplitude: number;
+  /** Weave cycles per second. Too fast and the craft makes no headway. */
+  jinkRate: number;
   difficulty: Record<AiDifficulty, AiTuning>;
 }
 
@@ -240,6 +256,7 @@ export const CONFIG: SkyTagConfig = {
   },
   weapon: {
     hitRadius: 1.8,
+    projectileRadius: 0.5,
     heatDecay: 5,
     heatDecayDelay: 0.6,
     muzzleOffset: 2.2,
@@ -269,6 +286,8 @@ export const CONFIG: SkyTagConfig = {
     decisionInterval: 0.35,
     actionHysteresis: 0.12,
     maxPathNodes: 8000,
+    jinkAmplitude: 26,
+    jinkRate: 0.85,
     difficulty: {
       easy: {
         reactionTime: 0.6,
@@ -320,6 +339,7 @@ export const CONFIG: SkyTagConfig = {
       heatCapacity: 20,
       cooldownTime: 3,
       range: 130,
+      projectileSpeed: 90,
       cruiseSpeed: 25,
       boostMultiplier: 1.95,
       boostDrain: 32,
@@ -334,6 +354,7 @@ export const CONFIG: SkyTagConfig = {
       heatCapacity: 20,
       cooldownTime: 3,
       range: 110,
+      projectileSpeed: 81,
       cruiseSpeed: 22,
       boostMultiplier: 1.85,
       boostDrain: 26,

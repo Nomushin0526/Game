@@ -23,7 +23,8 @@ import {
   teamsForRound,
   type MatchState,
 } from './rules.ts';
-import { neutralInput, type EntityState, type PlayerInput, type SimEvent, type Team, type Vec3 } from './types.ts';
+import { stepProjectiles, type ProjectileContext } from './projectile.ts';
+import { neutralInput, type EntityState, type PlayerInput, type ProjectileState, type SimEvent, type Team, type Vec3 } from './types.ts';
 import { stepWeapon, type WeaponContext } from './weapon.ts';
 import type { MapData } from '../maps/types.ts';
 
@@ -41,6 +42,8 @@ export interface WorldSnapshot {
   time: number;
   rngState: number;
   entities: EntityState[];
+  projectiles: ProjectileState[];
+  nextProjectileId: number;
   match: MatchState;
 }
 
@@ -53,6 +56,8 @@ export class World {
   readonly slots: number;
 
   entities: EntityState[] = [];
+  /** Bolts currently in the air. Read by the renderer, owned here. */
+  projectiles: ProjectileState[] = [];
   match: MatchState;
   /** Ticks elapsed since the world was reset. */
   tick = 0;
@@ -64,6 +69,7 @@ export class World {
   controlEnabled = false;
 
   private readonly seed: number;
+  private nextProjectileId = 1;
 
   /**
    * Async because Rapier's wasm has to be initialised once per process.
@@ -92,6 +98,7 @@ export class World {
     this.tick = 0;
     this.time = 0;
     this.events = [];
+    this.nextProjectileId = 1;
     this.match = createMatchState(this.config, this.slots);
     this.spawnRound();
   }
@@ -124,6 +131,8 @@ export class World {
     const teams = teamsForRound(this.match.round, this.config, this.slots);
     const spawns = this.pickSpawnPoints(this.slots);
     this.entities = teams.map((team, slot) => createEntity(slot, team, spawns[slot]!, this.config));
+    // Bolts never carry over: a round starts with clear air.
+    this.projectiles = [];
     this.controlEnabled = false;
   }
 
@@ -175,9 +184,11 @@ export class World {
     const weaponCtx: WeaponContext = {
       dt,
       config: this.config,
-      physics: this.physics,
       controlEnabled: this.controlEnabled,
+      spawn: (projectile) => this.projectiles.push(projectile),
+      nextProjectileId: () => this.nextProjectileId++,
     };
+    const projectileCtx: ProjectileContext = { dt, config: this.config, physics: this.physics };
 
     // Craft keep coasting outside the live phase; only control is taken away.
     for (const entity of this.entities) {
@@ -186,8 +197,15 @@ export class World {
     }
     for (const entity of this.entities) {
       const input = inputs[entity.id] ?? neutralInput();
-      this.events.push(...stepWeapon(entity, input, this.entities, weaponCtx));
+      this.events.push(...stepWeapon(entity, input, weaponCtx));
     }
+
+    // Bolts move after the craft and after the guns, so one fired this tick
+    // gets its first step immediately rather than hanging at the muzzle for a
+    // frame. Craft move first, so a shot resolves against where they are now.
+    const flown = stepProjectiles(this.projectiles, this.entities, projectileCtx);
+    this.projectiles = flown.survivors;
+    this.events.push(...flown.events);
 
     if (this.match.phase === 'live') {
       this.match.timeRemaining = Math.max(0, this.match.timeRemaining - dt);
@@ -243,6 +261,8 @@ export class World {
       time: this.time,
       rngState: this.rng.save(),
       entities: this.entities.map((e) => structuredClone(e)),
+      projectiles: this.projectiles.map((p) => structuredClone(p)),
+      nextProjectileId: this.nextProjectileId,
       match: structuredClone(this.match),
     };
   }
@@ -252,6 +272,8 @@ export class World {
     this.time = snapshot.time;
     this.rng.restore(snapshot.rngState);
     this.entities = snapshot.entities.map((e) => structuredClone(e));
+    this.projectiles = snapshot.projectiles.map((p) => structuredClone(p));
+    this.nextProjectileId = snapshot.nextProjectileId;
     this.match = structuredClone(snapshot.match);
     this.controlEnabled = this.match.phase === 'live';
   }

@@ -44,6 +44,8 @@ export interface BrainMemory {
    * forth without ever arriving anywhere.
    */
   coverCommit: number;
+  /** Advances with time; drives the phase of evasive weaving. */
+  jinkPhase: number;
 }
 
 export function createMemory(): BrainMemory {
@@ -54,6 +56,7 @@ export function createMemory(): BrainMemory {
     coverSpot: null,
     coverIsHidden: false,
     coverCommit: 0,
+    jinkPhase: 0,
   };
 }
 

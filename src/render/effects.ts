@@ -1,21 +1,26 @@
 /**
- * Transient visuals: beams, hit sparks, crashes and kills.
+ * Bolts in flight, plus the transient visuals around them: muzzle flashes, hit
+ * sparks, crashes and kills.
  *
- * Fed from the simulation's event list and driven by real frame time, not the
- * fixed tick, so effects keep fading smoothly while the world is paused.
- * Meshes are pooled because a held trigger produces several per second.
+ * Bolts are drawn from live simulation state each frame rather than from
+ * events, because they persist across ticks. Everything else is fed from the
+ * event list and driven by real frame time, not the fixed tick, so effects keep
+ * fading smoothly while the world is paused. Meshes are pooled because a held
+ * trigger produces several per second.
  */
 
 import * as THREE from 'three';
-import type { SimEvent } from '../sim/types.ts';
+import type { ProjectileState, SimEvent, Vec3 } from '../sim/types.ts';
 
-/** Purely cosmetic timings; none of these affect the simulation. */
-const BEAM_LIFETIME = 0.13;
+/** Purely cosmetic timings and sizes; none of these affect the simulation. */
+const MUZZLE_LIFETIME = 0.06;
 /**
- * Beams are deliberately chunky. From your own chase camera a shot goes almost
+ * Bolts are deliberately chunky. From your own chase camera a shot flies almost
  * straight down the view axis, so a hairline tracer reads as nothing at all.
  */
-const BEAM_RADIUS = 0.26;
+const BOLT_RADIUS = 0.34;
+/** Length of the drawn bolt, metres. Longer reads as faster. */
+const BOLT_LENGTH = 5;
 const SPARK_LIFETIME = 0.35;
 const CRASH_LIFETIME = 0.5;
 const DEATH_LIFETIME = 1.1;
@@ -33,7 +38,9 @@ export class Effects {
   private readonly active: Active[] = [];
   private readonly beamPool: THREE.Mesh[] = [];
   private readonly puffPool: THREE.Mesh[] = [];
-  private readonly beamGeometry = new THREE.CylinderGeometry(BEAM_RADIUS, BEAM_RADIUS, 1, 8, 1, true);
+  private readonly beamGeometry = new THREE.CylinderGeometry(BOLT_RADIUS, BOLT_RADIUS, 1, 8, 1, true);
+  /** Live bolts, keyed by projectile id, reusing the same pooled meshes. */
+  private readonly bolts = new Map<number, THREE.Mesh>();
   private readonly puffGeometry = new THREE.SphereGeometry(1, 10, 8);
 
   constructor(
@@ -45,8 +52,23 @@ export class Effects {
   spawn(events: readonly SimEvent[]): void {
     for (const event of events) {
       switch (event.type) {
-        case 'beam':
-          this.addBeam(event.origin, event.end, this.teamColor(event.shooterId));
+        case 'fire': {
+          // A short stub at the muzzle: the bolt itself is drawn from state.
+          const tip = {
+            x: event.origin.x + event.dir.x * BOLT_LENGTH,
+            y: event.origin.y + event.dir.y * BOLT_LENGTH,
+            z: event.origin.z + event.dir.z * BOLT_LENGTH,
+          };
+          this.addBeam(event.origin, tip, this.teamColor(event.shooterId));
+          break;
+        }
+        case 'projectileHit':
+          // Only geometry strikes spark here. A bolt that ran out of range
+          // fizzles silently, and one that hit a craft is covered by the
+          // damage event below, which would otherwise double the puff.
+          if (!event.expired && event.hitEntityId === null) {
+            this.addPuff(event.pos, 0.4, 1.8, SPARK_LIFETIME, 0xd8dee8);
+          }
           break;
         case 'damage':
           if (event.cause === 'beam') this.addPuff(event.pos, 0.6, 2.2, SPARK_LIFETIME, 0xffe07a);
@@ -60,6 +82,50 @@ export class Effects {
         default:
           break;
       }
+    }
+  }
+
+  /**
+   * Draw the bolts that are currently in the air.
+   *
+   * Their position is extrapolated by `alpha` of a tick, the same way craft are
+   * interpolated, so a bolt does not visibly stutter between simulation steps.
+   */
+  syncProjectiles(projectiles: readonly ProjectileState[], alpha: number, fixedDt: number): void {
+    const seen = new Set<number>();
+
+    for (const bolt of projectiles) {
+      seen.add(bolt.id);
+      let mesh = this.bolts.get(bolt.id);
+      if (!mesh) {
+        mesh = this.beamPool.pop() ?? this.makeMesh(this.beamGeometry, THREE.NormalBlending);
+        (mesh.material as THREE.MeshBasicMaterial).color.setHex(this.teamColor(bolt.ownerId));
+        (mesh.material as THREE.MeshBasicMaterial).opacity = 1;
+        mesh.scale.set(1, BOLT_LENGTH, 1);
+        mesh.visible = true;
+        this.scene.add(mesh);
+        this.bolts.set(bolt.id, mesh);
+      }
+
+      const lead = alpha * fixedDt;
+      const head: Vec3 = {
+        x: bolt.pos.x + bolt.vel.x * lead,
+        y: bolt.pos.y + bolt.vel.y * lead,
+        z: bolt.pos.z + bolt.vel.z * lead,
+      };
+      const direction = new THREE.Vector3(bolt.vel.x, bolt.vel.y, bolt.vel.z).normalize();
+      // The cylinder runs along Y and is centred, so pull it back half a length
+      // to put its nose at the bolt's actual position.
+      mesh.position.set(head.x, head.y, head.z).addScaledVector(direction, -BOLT_LENGTH / 2);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+    }
+
+    for (const [id, mesh] of this.bolts) {
+      if (seen.has(id)) continue;
+      this.scene.remove(mesh);
+      mesh.visible = false;
+      this.beamPool.push(mesh);
+      this.bolts.delete(id);
     }
   }
 
@@ -89,6 +155,12 @@ export class Effects {
   clear(): void {
     for (const item of this.active) this.retire(item);
     this.active.length = 0;
+    for (const [id, mesh] of this.bolts) {
+      this.scene.remove(mesh);
+      mesh.visible = false;
+      this.beamPool.push(mesh);
+      this.bolts.delete(id);
+    }
   }
 
   private addBeam(from: { x: number; y: number; z: number }, to: { x: number; y: number; z: number }, color: number): void {
@@ -107,8 +179,9 @@ export class Effects {
     );
     mesh.scale.set(1, length, 1);
     mesh.visible = true;
+    (mesh.material as THREE.MeshBasicMaterial).opacity = 1;
     this.scene.add(mesh);
-    this.active.push({ mesh, age: 0, lifetime: BEAM_LIFETIME, baseScale: 1 });
+    this.active.push({ mesh, age: 0, lifetime: MUZZLE_LIFETIME, baseScale: 1 });
   }
 
   private addPuff(
