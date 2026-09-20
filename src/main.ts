@@ -9,6 +9,8 @@
 
 import { generateCityMap } from './maps/generator.ts';
 import { loadMap } from './maps/loader.ts';
+import { AiController, buildGrid } from './ai/controller.ts';
+import type { VoxelGrid } from './ai/nav/voxelGrid.ts';
 import { applyAimAssist } from './input/aimAssist.ts';
 import { firstConnectedGamepad, GamepadInput } from './input/gamepad.ts';
 import { KeyboardMouseInput } from './input/keyboardMouse.ts';
@@ -33,6 +35,8 @@ interface Player {
   hud: Hud;
   /** Aim assist is a gamepad-only concession (DESIGN.md section 3). */
   assisted: boolean;
+  /** True for CPU slots, which drive their own view and need no pointer lock. */
+  isCpu: boolean;
 }
 
 async function main(): Promise<void> {
@@ -66,8 +70,15 @@ async function runMatch(
 
   const renderer = new SceneRenderer(canvas, map);
   const effects = new Effects(renderer.scene, (id) => TEAM_COLORS[world.entity(id).team]);
-  const players = createPlayers(setup, world, canvas, hudRoot);
-  const keyboard = players.find((p) => p.source instanceof KeyboardMouseInput)?.source as
+  const allPlayers = createPlayers(setup, world, canvas, hudRoot);
+  // Only human slots get a viewport. Watching two CPUs still needs one camera,
+  // so fall back to the first slot when nobody is human.
+  const humans = allPlayers.filter((p) => !p.isCpu);
+  const players = humans.length > 0 ? humans : allPlayers.slice(0, 1);
+  for (const player of allPlayers) {
+    if (!players.includes(player)) player.hud.dispose();
+  }
+  const keyboard = allPlayers.find((p) => p.source instanceof KeyboardMouseInput)?.source as
     | KeyboardMouseInput
     | undefined;
 
@@ -117,7 +128,7 @@ async function runMatch(
       accumulator += frameTime;
       while (accumulator >= fixedDt) {
         previousPositions = new Map(world.entities.map((e) => [e.id, { ...e.pos }]));
-        world.step(collectInputs(players, world, fixedDt));
+        world.step(collectInputs(allPlayers, world, fixedDt));
         effects.spawn(world.events);
         accumulator -= fixedDt;
       }
@@ -134,7 +145,7 @@ async function runMatch(
           intermission = 0;
           effects.clear();
           world.nextRound();
-          for (const player of players) {
+          for (const player of allPlayers) {
             player.camera.reset();
             player.source.setAim(world.entity(player.slot).aimYaw, 0);
           }
@@ -152,7 +163,7 @@ async function runMatch(
   window.removeEventListener('resize', layout);
   canvas.removeEventListener('click', onClick);
   if (document.pointerLockElement) document.exitPointerLock();
-  for (const player of players) {
+  for (const player of allPlayers) {
     player.source.dispose();
     player.hud.dispose();
   }
@@ -168,12 +179,26 @@ function createPlayers(
   hudRoot: HTMLElement,
 ): Player[] {
   const usedPads: number[] = [];
+  // Voxelising the map takes a few milliseconds, so every CPU on it shares one.
+  let grid: VoxelGrid | undefined;
+
   return setup.devices.map((device, slot) => {
     const entity = world.entity(slot);
     let source: InputSource;
     let assisted = false;
+    let isCpu = false;
 
-    if (device === 'gamepad') {
+    if (device === 'cpu') {
+      grid ??= buildGrid(world);
+      source = new AiController({
+        world,
+        slot,
+        difficulty: setup.difficulty,
+        grid,
+        seed: setup.seed * 7919 + slot * 104729,
+      });
+      isCpu = true;
+    } else if (device === 'gamepad') {
       const index = firstConnectedGamepad(usedPads) ?? usedPads.length;
       usedPads.push(index);
       source = new GamepadInput(index, { config: world.config, initialYaw: entity.aimYaw });
@@ -184,11 +209,12 @@ function createPlayers(
 
     return {
       slot,
-      label: `P${slot + 1}`,
+      label: device === 'cpu' ? `CPU${slot + 1}` : `P${slot + 1}`,
       source,
       assisted,
+      isCpu,
       camera: new FollowCamera(1),
-      hud: new Hud(hudRoot, `P${slot + 1}`, world.config, world.physics),
+      hud: new Hud(hudRoot, device === 'cpu' ? `CPU ${setup.difficulty}` : `P${slot + 1}`, world.config, world.physics),
     };
   });
 }

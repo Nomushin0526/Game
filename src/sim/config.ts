@@ -133,6 +133,53 @@ export interface InputConfig {
   aimAssistStrength: number;
 }
 
+/** Difficulty knobs from DESIGN.md 7.1: reaction, aim error, lead accuracy. */
+export type AiDifficulty = 'easy' | 'normal' | 'hard';
+
+export interface AiTuning {
+  /** Seconds between the enemy becoming visible and the AI acting on it. */
+  reactionTime: number;
+  /** Spread of the random aim offset, radians. */
+  aimError: number;
+  /** How fast the AI can swing its aim, radians per second. */
+  turnRate: number;
+  /** 0..1 fraction of the correct lead applied when shooting a moving target. */
+  leadAccuracy: number;
+  /** 0..1 trigger discipline: how often it shoots when it legitimately could. */
+  fireWillingness: number;
+  /** Distance it tries to hold in a gunfight, metres. */
+  preferredRange: number;
+}
+
+export interface AiConfig {
+  /** Navigation voxel size, metres (DESIGN.md 7.1 specifies 4 m). */
+  cellSize: number;
+  /** Space kept clear around obstacles when marking voxels blocked, metres. */
+  clearance: number;
+  /** Total field of view, radians. Outside it the enemy is simply not seen. */
+  fovRad: number;
+  /**
+   * How far the AI can pick a craft out, metres.
+   *
+   * Without a limit the CPU spots its opponent across the whole arena the
+   * instant a round starts, which makes breaking contact impossible and the
+   * runner's entire game unplayable. Set above weapon range so a duel is never
+   * fought blind.
+   */
+  sightRange: number;
+  /** Seconds a lost target's last known position is still worth chasing. */
+  memoryDuration: number;
+  /** Seconds between path recalculations. Pathfinding is the expensive part. */
+  repathInterval: number;
+  /** Seconds between utility re-evaluations. */
+  decisionInterval: number;
+  /** Score bonus for the action already running, so it cannot flip-flop. */
+  actionHysteresis: number;
+  /** Cap on A* node expansions per search, so one call cannot stall a tick. */
+  maxPathNodes: number;
+  difficulty: Record<AiDifficulty, AiTuning>;
+}
+
 export interface HudConfig {
   /**
    * How much the HUD tells you about the enemy (DESIGN.md section 10).
@@ -161,6 +208,7 @@ export interface SkyTagConfig {
   rules: RulesConfig;
   input: InputConfig;
   hud: HudConfig;
+  ai: AiConfig;
   loadout: Record<Team, LoadoutConfig>;
 }
 
@@ -208,6 +256,45 @@ export const CONFIG: SkyTagConfig = {
     roundIntermission: 4,
     minSpawnDistance: 150,
     hitInvulnerability: 0,
+  },
+  ai: {
+    cellSize: 4,
+    // Roughly two body radii: enough that a route down a street does not
+    // scrape the buildings on either side, without writing the street off.
+    clearance: 2.5,
+    fovRad: (120 * Math.PI) / 180,
+    sightRange: 190,
+    memoryDuration: 8,
+    repathInterval: 0.5,
+    decisionInterval: 0.35,
+    actionHysteresis: 0.12,
+    maxPathNodes: 8000,
+    difficulty: {
+      easy: {
+        reactionTime: 0.6,
+        aimError: 0.085,
+        turnRate: 1.6,
+        leadAccuracy: 0.2,
+        fireWillingness: 0.55,
+        preferredRange: 70,
+      },
+      normal: {
+        reactionTime: 0.32,
+        aimError: 0.042,
+        turnRate: 2.6,
+        leadAccuracy: 0.6,
+        fireWillingness: 0.8,
+        preferredRange: 60,
+      },
+      hard: {
+        reactionTime: 0.15,
+        aimError: 0.016,
+        turnRate: 4.0,
+        leadAccuracy: 0.95,
+        fireWillingness: 0.95,
+        preferredRange: 52,
+      },
+    },
   },
   hud: {
     // Hiding has to mean something in a game of tag, so the default is the

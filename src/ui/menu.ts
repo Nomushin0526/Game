@@ -6,10 +6,11 @@
  */
 
 import { builtinMapIds } from '../maps/loader.ts';
+import type { AiDifficulty } from '../sim/config.ts';
 import { describeResult, type MatchState } from '../sim/rules.ts';
 
-export type DeviceKind = 'keyboard' | 'gamepad';
-export type GameMode = 'solo' | 'local2p';
+export type DeviceKind = 'keyboard' | 'gamepad' | 'cpu';
+export type GameMode = 'solo' | 'local2p' | 'cpu';
 
 export interface MatchSetup {
   mode: GameMode;
@@ -17,6 +18,8 @@ export interface MatchSetup {
   seed: number;
   /** Device per player slot. */
   devices: DeviceKind[];
+  /** Difficulty for any `cpu` slot. */
+  difficulty: AiDifficulty;
 }
 
 export interface MenuDefaults {
@@ -48,7 +51,20 @@ export function showMenu(root: HTMLElement, defaults: MenuDefaults): Promise<Mat
     seedInput.type = 'number';
     seedInput.value = String(defaults.seed);
 
-    panel.append(field('マップ', mapSelect), field('シード', seedInput));
+    const difficultySelect = el('select', 'field-input') as HTMLSelectElement;
+    for (const [value, label] of [
+      ['easy', 'Easy（反応 0.6秒・照準が甘い）'],
+      ['normal', 'Normal'],
+      ['hard', 'Hard（反応 0.15秒・偏差射撃が正確）'],
+    ] as const) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      difficultySelect.append(option);
+    }
+    difficultySelect.value = 'normal';
+
+    panel.append(field('マップ', mapSelect), field('シード', seedInput), field('CPU 難易度', difficultySelect));
 
     const gamepadNote = el('p', 'note');
     const refreshNote = (): void => {
@@ -73,22 +89,22 @@ export function showMenu(root: HTMLElement, defaults: MenuDefaults): Promise<Mat
       mapId: mapSelect.value,
       seed: Number(seedInput.value) || defaults.seed,
       devices,
+      difficulty: difficultySelect.value as AiDifficulty,
     });
 
     const buttons = el('div', 'buttons');
     buttons.append(
-      button('1人で飛ぶ（練習）', 'primary', () => start(read('solo', ['keyboard']))),
-      button('ローカル2人対戦（KB+マウス / ゲームパッド）', 'primary', () =>
+      button('CPU対戦（あなたが鬼）', 'primary', () => start(read('cpu', ['keyboard', 'cpu']))),
+      button('CPU対戦（あなたが逃亡者）', 'primary', () => start(read('cpu', ['cpu', 'keyboard']))),
+      button('CPU 同士を観戦', '', () => start(read('cpu', ['cpu', 'cpu']))),
+      button('ローカル2人対戦（KB+マウス / ゲームパッド）', '', () =>
         start(read('local2p', ['keyboard', 'gamepad'])),
       ),
       button('ローカル2人対戦（ゲームパッド2台）', '', () =>
         start(read('local2p', ['gamepad', 'gamepad'])),
       ),
+      button('1人で飛ぶ（練習）', '', () => start(read('solo', ['keyboard']))),
     );
-
-    const soon = button('CPU対戦（フェーズ4で実装）', 'disabled', () => {});
-    (soon as HTMLButtonElement).disabled = true;
-    buttons.append(soon);
 
     panel.append(buttons, gamepadNote, el('p', 'note', controlsText()));
     screen.append(panel);
