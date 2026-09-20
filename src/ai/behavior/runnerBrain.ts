@@ -7,9 +7,11 @@
 
 import { distance } from '../../sim/math.ts';
 import type { Vec3 } from '../../sim/types.ts';
-import { aimPoint, canShoot, findClutter, findCover, findEscape, jink, sampleArena } from '../tactics.ts';
+import { angleDelta, lookAngles } from '../../sim/math.ts';
+import { NO_ITEM } from '../../sim/types.ts';
+import { canShoot, findClutter, findCover, findEscape, jink, sampleArena, shotTarget } from '../tactics.ts';
 import { holdRange } from './hunterBrain.ts';
-import type { Action, Brain, BrainContext, Intent } from '../types.ts';
+import type { Action, Brain, BrainContext, Intent, ItemChoice } from '../types.ts';
 
 /** Below this the hunter is close enough that only distance matters. */
 const PANIC_RANGE = 45;
@@ -134,9 +136,9 @@ const fight: Action = {
   },
   act(ctx): Intent {
     const enemy = ctx.enemy;
-    if (!enemy) return goToGround(ctx);
+    const shootAt = shotTarget(ctx);
+    if (!enemy || !shootAt) return goToGround(ctx);
 
-    const shootAt = aimPoint(ctx.self, enemy, ctx.tuning, ctx.config);
     return {
       moveTo: ctx.nav.steer(ctx.self.pos, holdRange(ctx, enemy.pos, ctx.tuning.preferredRange), ctx.dt),
       lookAt: shootAt,
@@ -163,9 +165,9 @@ const kite: Action = {
   },
   act(ctx): Intent {
     const enemy = ctx.enemy;
-    if (!enemy) return goToGround(ctx);
+    const shootAt = shotTarget(ctx);
+    if (!enemy || !shootAt) return goToGround(ctx);
 
-    const shootAt = aimPoint(ctx.self, enemy, ctx.tuning, ctx.config);
     if (!ctx.memory.escapeTarget || distance(ctx.self.pos, ctx.memory.escapeTarget) < 25) {
       ctx.memory.escapeTarget = findEscape(ctx, enemy.pos, 100);
     }
@@ -197,4 +199,55 @@ function goToGround(ctx: BrainContext): Intent {
   };
 }
 
-export const runnerBrain: Brain = { actions: [evade, hide, fight, kite] };
+/**
+ * When to spend a charge.
+ *
+ * Ordered by urgency rather than scored, because the situations barely overlap:
+ * a flash is for a hunter that is on top of you, a shield for one that is
+ * already hitting you, and a decoy for the moment you still have room to
+ * disappear. Spending the wrong one is worse than spending none.
+ */
+function chooseItem(ctx: BrainContext): ItemChoice {
+  const ready = (kind: 'decoy' | 'shield' | 'flash'): number =>
+    ctx.self.items.findIndex((slot) => slot.kind === kind && slot.charges > 0 && slot.cooldown <= 0);
+
+  const enemy = ctx.enemy;
+  if (!enemy || !ctx.perception.visible || ctx.perception.fooled) return NO_ITEM;
+
+  const items = ctx.config.items;
+  const maxHp = ctx.config.loadout[ctx.self.team].maxHp;
+
+  // Flash: close enough for the burst to reach, and pointed roughly at it.
+  const flash = ready('flash');
+  if (flash >= 0 && ctx.range < items.flash.radius * 0.75) {
+    const desired = lookAngles(ctx.self.pos, enemy.pos);
+    const offAim = Math.abs(angleDelta(ctx.self.aimYaw, desired.yaw));
+    if (offAim < 0.5 && !ctx.physics.isBlocked(ctx.self.pos, enemy.pos)) return flash;
+  }
+
+  // Shield: already being shot at, and hurt enough that the next burst matters.
+  const shield = ready('shield');
+  if (
+    shield >= 0 &&
+    ctx.self.shieldTimer <= 0 &&
+    ctx.self.hp < maxHp * 0.7 &&
+    ctx.range < ctx.config.loadout.hunter.range
+  ) {
+    return shield;
+  }
+
+  // Decoy: seen, but with enough room left that a phantom has somewhere to go.
+  const decoy = ready('decoy');
+  if (decoy >= 0 && ctx.range > PANIC_RANGE && ctx.range < 150) {
+    // Break away the moment it is dropped, or the runner simply flies alongside
+    // its own phantom and fools nobody.
+    ctx.memory.escapeTarget = null;
+    ctx.memory.coverSpot = null;
+    ctx.memory.coverCommit = 0;
+    return decoy;
+  }
+
+  return NO_ITEM;
+}
+
+export const runnerBrain: Brain = { actions: [evade, hide, fight, kite], chooseItem };

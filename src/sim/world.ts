@@ -23,8 +23,9 @@ import {
   teamsForRound,
   type MatchState,
 } from './rules.ts';
+import { stepDecoys, stepItems, type ItemContext } from './items.ts';
 import { stepProjectiles, type ProjectileContext } from './projectile.ts';
-import { neutralInput, type EntityState, type PlayerInput, type ProjectileState, type SimEvent, type Team, type Vec3 } from './types.ts';
+import { neutralInput, type DecoyState, type EntityState, type PlayerInput, type ProjectileState, type SimEvent, type Team, type Vec3 } from './types.ts';
 import { stepWeapon, type WeaponContext } from './weapon.ts';
 import type { MapData } from '../maps/types.ts';
 
@@ -43,7 +44,9 @@ export interface WorldSnapshot {
   rngState: number;
   entities: EntityState[];
   projectiles: ProjectileState[];
+  decoys: DecoyState[];
   nextProjectileId: number;
+  nextDecoyId: number;
   match: MatchState;
 }
 
@@ -58,6 +61,8 @@ export class World {
   entities: EntityState[] = [];
   /** Bolts currently in the air. Read by the renderer, owned here. */
   projectiles: ProjectileState[] = [];
+  /** Phantoms currently flying. Read by the renderer and by AI perception. */
+  decoys: DecoyState[] = [];
   match: MatchState;
   /** Ticks elapsed since the world was reset. */
   tick = 0;
@@ -70,6 +75,7 @@ export class World {
 
   private readonly seed: number;
   private nextProjectileId = 1;
+  private nextDecoyId = 1;
 
   /**
    * Async because Rapier's wasm has to be initialised once per process.
@@ -99,6 +105,7 @@ export class World {
     this.time = 0;
     this.events = [];
     this.nextProjectileId = 1;
+    this.nextDecoyId = 1;
     this.match = createMatchState(this.config, this.slots);
     this.spawnRound();
   }
@@ -131,8 +138,9 @@ export class World {
     const teams = teamsForRound(this.match.round, this.config, this.slots);
     const spawns = this.pickSpawnPoints(this.slots);
     this.entities = teams.map((team, slot) => createEntity(slot, team, spawns[slot]!, this.config));
-    // Bolts never carry over: a round starts with clear air.
+    // Nothing carries over: a round starts with clear air.
     this.projectiles = [];
+    this.decoys = [];
     this.controlEnabled = false;
   }
 
@@ -189,6 +197,16 @@ export class World {
       nextProjectileId: () => this.nextProjectileId++,
     };
     const projectileCtx: ProjectileContext = { dt, config: this.config, physics: this.physics };
+    const itemCtx: ItemContext = {
+      dt,
+      config: this.config,
+      physics: this.physics,
+      controlEnabled: this.controlEnabled,
+      spawnDecoy: (decoy) => this.decoys.push(decoy),
+      spawnProjectile: (projectile) => this.projectiles.push(projectile),
+      nextDecoyId: () => this.nextDecoyId++,
+      nextProjectileId: () => this.nextProjectileId++,
+    };
 
     // Craft keep coasting outside the live phase; only control is taken away.
     for (const entity of this.entities) {
@@ -198,12 +216,24 @@ export class World {
     for (const entity of this.entities) {
       const input = inputs[entity.id] ?? neutralInput();
       this.events.push(...stepWeapon(entity, input, weaponCtx));
+      this.events.push(...stepItems(entity, input, itemCtx));
     }
+
+    // Decoys move before the bolts so a phantom cannot be shot at a position
+    // it has already left this tick.
+    const phantoms = stepDecoys(this.decoys, {
+      dt,
+      physics: this.physics,
+      config: this.config,
+      bounds: this.bounds,
+    });
+    this.decoys = phantoms.survivors;
+    this.events.push(...phantoms.events);
 
     // Bolts move after the craft and after the guns, so one fired this tick
     // gets its first step immediately rather than hanging at the muzzle for a
     // frame. Craft move first, so a shot resolves against where they are now.
-    const flown = stepProjectiles(this.projectiles, this.entities, projectileCtx);
+    const flown = stepProjectiles(this.projectiles, this.entities, this.decoys, projectileCtx);
     this.projectiles = flown.survivors;
     this.events.push(...flown.events);
 
@@ -262,7 +292,9 @@ export class World {
       rngState: this.rng.save(),
       entities: this.entities.map((e) => structuredClone(e)),
       projectiles: this.projectiles.map((p) => structuredClone(p)),
+      decoys: this.decoys.map((d) => structuredClone(d)),
       nextProjectileId: this.nextProjectileId,
+      nextDecoyId: this.nextDecoyId,
       match: structuredClone(this.match),
     };
   }
@@ -273,7 +305,9 @@ export class World {
     this.rng.restore(snapshot.rngState);
     this.entities = snapshot.entities.map((e) => structuredClone(e));
     this.projectiles = snapshot.projectiles.map((p) => structuredClone(p));
+    this.decoys = snapshot.decoys.map((d) => structuredClone(d));
     this.nextProjectileId = snapshot.nextProjectileId;
+    this.nextDecoyId = snapshot.nextDecoyId;
     this.match = structuredClone(snapshot.match);
     this.controlEnabled = this.match.phase === 'live';
   }

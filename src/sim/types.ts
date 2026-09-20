@@ -5,6 +5,8 @@
  * The simulation has to stay runnable head-less under plain Node.js.
  */
 
+import type { ItemKind } from './config.ts';
+
 export interface Vec3 {
   x: number;
   y: number;
@@ -29,6 +31,14 @@ export interface PlayerInput {
   aimPitch: number;
   fire: boolean;
   boost: boolean;
+  /**
+   * Item slot to use this tick, or -1 for none.
+   *
+   * Edge-triggered by whoever produces the input: a source holds the index for
+   * exactly one tick per press. Holding the key down does not spend the next
+   * charge the moment the cooldown expires.
+   */
+  useItem: number;
 }
 
 export function neutralInput(): PlayerInput {
@@ -38,8 +48,12 @@ export function neutralInput(): PlayerInput {
     aimPitch: 0,
     fire: false,
     boost: false,
+    useItem: NO_ITEM,
   };
 }
+
+/** `PlayerInput.useItem` value meaning "not using anything this tick". */
+export const NO_ITEM = -1;
 
 /** Everything the simulation tracks about one craft. */
 export interface EntityState {
@@ -68,11 +82,51 @@ export interface EntityState {
   sinceLastShot: number;
   /** Seconds of remaining damage immunity after being hit. */
   invulnTimer: number;
+  /** Consumables carried this round, in slot order. */
+  items: ItemSlotState[];
+  /** Seconds of shield left. Beam damage is soaked while this is positive. */
+  shieldTimer: number;
+  /** Damage the current shield can still soak before it breaks early. */
+  shieldPool: number;
+  /** Seconds left blinded by a flash. Perception is dead while positive. */
+  blindTimer: number;
   /** Bolts fired this round, for the result screen and phase 5's player model. */
   shotsFired: number;
   shotsHit: number;
   alive: boolean;
 }
+
+/** One item slot: what it is, how many uses are left, and whether it is ready. */
+export interface ItemSlotState {
+  kind: ItemKind;
+  charges: number;
+  /** Seconds until the slot is usable again. */
+  cooldown: number;
+}
+
+/**
+ * A phantom craft, thrown to be chased.
+ *
+ * It is not an entity: it cannot be hit for damage, cannot shoot and cannot
+ * win a round. It exists purely to be mistaken for its owner by whatever is
+ * looking — which for the CPU means `Perception`, and for a human means their
+ * own eyes.
+ */
+export interface DecoyState {
+  id: number;
+  ownerId: number;
+  team: Team;
+  pos: Vec3;
+  vel: Vec3;
+  /** Seconds of life left. */
+  life: number;
+}
+
+/**
+ * What a projectile is for.
+ * A `flash` carries no damage and bursts on its fuse instead of on contact.
+ */
+export type ProjectileKind = 'bolt' | 'flash';
 
 /**
  * A bolt in flight.
@@ -86,6 +140,7 @@ export interface EntityState {
  */
 export interface ProjectileState {
   id: number;
+  kind: ProjectileKind;
   /** Entity that fired it. Bolts never hit their owner. */
   ownerId: number;
   team: Team;
@@ -158,6 +213,47 @@ export interface OverheatEvent {
   entityId: number;
 }
 
+/** A craft spent a charge. */
+export interface ItemUsedEvent {
+  type: 'itemUsed';
+  entityId: number;
+  kind: ItemKind;
+  pos: Vec3;
+}
+
+/** A flash grenade went off. */
+export interface FlashBurstEvent {
+  type: 'flashBurst';
+  projectileId: number;
+  ownerId: number;
+  pos: Vec3;
+  radius: number;
+}
+
+export interface BlindedEvent {
+  type: 'blinded';
+  entityId: number;
+  duration: number;
+}
+
+/** A shield took a hit meant for its owner. */
+export interface ShieldAbsorbedEvent {
+  type: 'shieldAbsorbed';
+  entityId: number;
+  amount: number;
+  /** True when this hit used the shield up. */
+  broke: boolean;
+  pos: Vec3;
+}
+
+/** A decoy expired, or was shot and popped. */
+export interface DecoyGoneEvent {
+  type: 'decoyGone';
+  decoyId: number;
+  pos: Vec3;
+  popped: boolean;
+}
+
 /** The hunter got within `rules.touchRadius` of the runner. */
 export interface TouchEvent {
   type: 'touch';
@@ -173,6 +269,11 @@ export type SimEvent =
   | DamageEvent
   | DeathEvent
   | OverheatEvent
+  | ItemUsedEvent
+  | FlashBurstEvent
+  | BlindedEvent
+  | DecoyGoneEvent
+  | ShieldAbsorbedEvent
   | TouchEvent;
 
 export const v3 = (x = 0, y = 0, z = 0): Vec3 => ({ x, y, z });

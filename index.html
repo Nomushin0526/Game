@@ -79,6 +79,42 @@
       .hud-bar-heat.overheated .hud-bar-fill { background: #ef4444; }
       .hud-bar-heat.overheated .hud-bar-value { color: #ef4444; }
 
+      .hud-items { display: flex; gap: 6px; margin-top: 3px; }
+      .hud-item {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 7px;
+        background: rgba(0, 0, 0, 0.45);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        font-size: 10px;
+        overflow: hidden;
+      }
+      .hud-item-key { color: var(--muted); }
+      .hud-item-charges { color: #7fd4ff; letter-spacing: 1px; }
+      .hud-item.spent { opacity: 0.35; }
+      .hud-item.spent .hud-item-charges { color: var(--muted); }
+      .hud-item-cooldown {
+        position: absolute;
+        inset: 0 auto 0 0;
+        width: 0;
+        background: rgba(127, 212, 255, 0.22);
+        pointer-events: none;
+        transition: width 80ms linear;
+      }
+
+      /* Flash grenade: whites the pane out, then fades as the sim timer runs down. */
+      .hud-blind {
+        position: absolute;
+        inset: 0;
+        background: #ffffff;
+        opacity: 0;
+        transition: opacity 120ms linear;
+        pointer-events: none;
+      }
+
       .hud-crosshair {
         position: absolute;
         left: 50%;

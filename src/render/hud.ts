@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import type { SkyTagConfig } from '../sim/config.ts';
 import type { PhysicsWorld } from '../sim/physics.ts';
 import { describeResult, type MatchState } from '../sim/rules.ts';
-import type { EntityState } from '../sim/types.ts';
+import type { EntityState, ItemSlotState } from '../sim/types.ts';
 import { TEAM_COLORS } from './scene.ts';
 
 /** Fraction of the half-extent at which the off-screen arrow sits. */
@@ -47,6 +47,9 @@ export class Hud {
   private readonly heat: Bar;
   private readonly arrow: HTMLDivElement;
   private readonly enemyLabel: HTMLDivElement;
+  private readonly items: HTMLDivElement;
+  private readonly itemSlots: ItemSlotView[] = [];
+  private readonly blindOverlay: HTMLDivElement;
   private readonly projected = new THREE.Vector3();
 
   constructor(
@@ -74,12 +77,19 @@ export class Hud {
     this.heat = new Bar('hud-bar-heat', 'HEAT');
     bottom.append(this.role, this.selfHp.root, this.boost.root, this.heat.root);
 
+    this.items = el('div', 'hud-items');
+    bottom.append(this.items);
+
     this.banner = el('div', 'hud-banner');
     this.subBanner = el('div', 'hud-subbanner');
     this.arrow = el('div', 'hud-arrow');
+    this.blindOverlay = el('div', 'hud-blind');
 
     const crosshair = el('div', 'hud-crosshair');
-    this.root.append(top, enemyBlock, bottom, this.arrow, crosshair, this.banner, this.subBanner);
+    this.root.append(
+      top, enemyBlock, bottom, this.arrow, crosshair,
+      this.blindOverlay, this.banner, this.subBanner,
+    );
     container.append(this.root);
   }
 
@@ -108,6 +118,11 @@ export class Hud {
     this.boost.set(self.boostFuel / this.config.flight.boostCapacity, self.boosting ? 'BOOST' : '');
     this.heat.set(self.heat / loadout.heatCapacity, self.overheated ? 'OVERHEAT' : '');
     this.heat.root.classList.toggle('overheated', self.overheated);
+
+    this.updateItems(self.items);
+    // A flash whites the pane out and fades; the sim decides how long.
+    const blinded = self.blindTimer > 0;
+    this.blindOverlay.style.opacity = blinded ? String(Math.min(1, self.blindTimer / 0.8)) : '0';
 
     this.updateEnemy(self, enemy, frame.camera);
 
@@ -167,10 +182,51 @@ export class Hud {
     this.arrow.style.transform = `translate(-50%, -50%) rotate(${Math.atan2(-y, x) + Math.PI / 2}rad)`;
   }
 
+  /** Rebuilds the chips only when the loadout changes, e.g. on a side swap. */
+  private updateItems(slots: readonly ItemSlotState[]): void {
+    if (this.itemSlots.length !== slots.length) {
+      this.items.replaceChildren();
+      this.itemSlots.length = 0;
+      slots.forEach((slot, index) => {
+        const root = el('div', 'hud-item');
+        root.append(el('span', 'hud-item-key', String(index + 1)));
+        root.append(el('span', 'hud-item-name', ITEM_LABELS[slot.kind] ?? slot.kind));
+        const charges = el('span', 'hud-item-charges');
+        const cooldown = el('div', 'hud-item-cooldown');
+        root.append(charges, cooldown);
+        this.items.append(root);
+        this.itemSlots.push({ root, charges, cooldown });
+      });
+    }
+
+    slots.forEach((slot, index) => {
+      const view = this.itemSlots[index]!;
+      const max = this.config.items[slot.kind].cooldown;
+      view.charges.textContent = '●'.repeat(slot.charges) || '—';
+      view.root.classList.toggle('spent', slot.charges <= 0);
+      view.root.classList.toggle('cooling', slot.cooldown > 0 && slot.charges > 0);
+      // A wipe that shrinks as the slot comes back up.
+      view.cooldown.style.width = max > 0 ? `${(slot.cooldown / max) * 100}%` : '0%';
+    });
+  }
+
   dispose(): void {
     this.root.remove();
   }
 }
+
+/** One item slot chip: key hint, name, charges, and a cooldown wipe. */
+interface ItemSlotView {
+  root: HTMLDivElement;
+  charges: HTMLSpanElement;
+  cooldown: HTMLDivElement;
+}
+
+const ITEM_LABELS: Record<string, string> = {
+  decoy: 'デコイ',
+  shield: 'シールド',
+  flash: 'フラッシュ',
+};
 
 /** A labelled fill bar. */
 class Bar {

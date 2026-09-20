@@ -7,7 +7,7 @@
 
 import * as THREE from 'three';
 import type { MapData, Solid, SolidTag } from '../maps/types.ts';
-import type { EntityState, Team, Vec3 } from '../sim/types.ts';
+import type { DecoyState, EntityState, Team, Vec3 } from '../sim/types.ts';
 
 const SOLID_COLORS: Record<SolidTag, number> = {
   ground: 0x2a3140,
@@ -32,6 +32,8 @@ export class SceneRenderer {
   readonly scene = new THREE.Scene();
   readonly renderer: THREE.WebGLRenderer;
   private readonly craft = new Map<number, THREE.Object3D>();
+  private readonly decoys = new Map<number, THREE.Object3D>();
+  private readonly shields = new Map<number, THREE.Mesh>();
 
   constructor(canvas: HTMLCanvasElement, map: MapData) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -182,7 +184,76 @@ export class SceneRenderer {
       mesh.rotateY(entity.aimYaw);
       mesh.rotateX(-entity.aimPitch);
       mesh.visible = entity.alive;
+
+      this.syncShield(entity, mesh.position);
     }
+  }
+
+  /**
+   * Draw the decoys.
+   *
+   * Deliberately the same model and colour as the craft that threw them: the
+   * point is that you cannot tell at a glance. Only the faint shimmer as one
+   * fades gives it away.
+   */
+  syncDecoys(decoys: readonly DecoyState[], config: { duration: number }): void {
+    const seen = new Set<number>();
+
+    for (const decoy of decoys) {
+      seen.add(decoy.id);
+      let mesh = this.decoys.get(decoy.id);
+      if (!mesh) {
+        mesh = makeCraft(decoy.team);
+        this.decoys.set(decoy.id, mesh);
+        this.scene.add(mesh);
+      }
+      mesh.position.set(decoy.pos.x, decoy.pos.y, decoy.pos.z);
+      const heading = new THREE.Vector3(decoy.vel.x, decoy.vel.y, decoy.vel.z);
+      if (heading.lengthSq() > 1e-6) {
+        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), heading.normalize());
+      }
+      // Fades over its last second, which is the only tell.
+      setOpacity(mesh, Math.min(1, decoy.life / Math.min(1, config.duration)));
+    }
+
+    for (const [id, mesh] of this.decoys) {
+      if (seen.has(id)) continue;
+      this.scene.remove(mesh);
+      this.decoys.delete(id);
+    }
+  }
+
+  /** A bubble around a craft whose shield is up. */
+  private syncShield(entity: EntityState, at: THREE.Vector3): void {
+    const active = entity.shieldTimer > 0 && entity.alive;
+    let bubble = this.shields.get(entity.id);
+
+    if (!active) {
+      if (bubble) bubble.visible = false;
+      return;
+    }
+    if (!bubble) {
+      // Wireframe rather than a solid shell: from your own chase camera you
+      // are looking straight through your shield, and anything solid enough to
+      // read as protection is also solid enough to hide the fight.
+      bubble = new THREE.Mesh(
+        new THREE.SphereGeometry(4.2, 12, 8),
+        new THREE.MeshBasicMaterial({
+          color: 0x7fd4ff,
+          transparent: true,
+          opacity: 0.5,
+          depthWrite: false,
+          wireframe: true,
+        }),
+      );
+      this.shields.set(entity.id, bubble);
+      this.scene.add(bubble);
+    }
+    bubble.visible = true;
+    bubble.position.copy(at);
+    // Pulses as it runs down, so the owner can feel it about to drop.
+    const material = bubble.material as THREE.MeshBasicMaterial;
+    material.opacity = 0.35 + 0.3 * Math.abs(Math.sin(entity.shieldTimer * 6));
   }
 
   craftObject(id: number): THREE.Object3D | undefined {
@@ -220,6 +291,10 @@ export class SceneRenderer {
   resetCraft(): void {
     for (const mesh of this.craft.values()) this.scene.remove(mesh);
     this.craft.clear();
+    for (const mesh of this.decoys.values()) this.scene.remove(mesh);
+    this.decoys.clear();
+    for (const mesh of this.shields.values()) this.scene.remove(mesh);
+    this.shields.clear();
   }
 
   dispose(): void {
@@ -266,3 +341,14 @@ function makeCraft(team: Team): THREE.Object3D {
 }
 
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
+
+/** Fade a whole craft model, used for decoys running out of life. */
+function setOpacity(object: THREE.Object3D, opacity: number): void {
+  object.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.material) return;
+    const material = mesh.material as THREE.Material;
+    material.transparent = opacity < 1;
+    material.opacity = opacity;
+  });
+}

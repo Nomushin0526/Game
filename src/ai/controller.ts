@@ -22,7 +22,7 @@ import {
   wrapAngle,
 } from '../sim/math.ts';
 import { Rng } from '../sim/rng.ts';
-import { neutralInput, type EntityState, type PlayerInput, type Vec3 } from '../sim/types.ts';
+import { NO_ITEM, neutralInput, type EntityState, type PlayerInput, type Vec3 } from '../sim/types.ts';
 import type { World } from '../sim/world.ts';
 import type { InputSource } from '../input/types.ts';
 import { hunterBrain } from './behavior/hunterBrain.ts';
@@ -66,6 +66,8 @@ export class AiController implements InputSource {
   private aimPitch = 0;
   private currentAction: Action | null = null;
   private sinceDecision = Number.POSITIVE_INFINITY;
+  /** Latched for one tick, so a charge is spent once rather than every tick. */
+  private pendingItem = NO_ITEM;
   /** Which team the brain was built for, so a side swap rebuilds it. */
   private brainTeam: EntityState['team'] | null = null;
   private brain: Brain = hunterBrain;
@@ -106,7 +108,15 @@ export class AiController implements InputSource {
       this.reset(self);
     }
 
-    this.perception.update(self, enemy, this.world.physics, this.config, this.tuning, dt);
+    this.perception.update(
+      self,
+      enemy,
+      this.world.decoys,
+      this.world.physics,
+      this.config,
+      this.tuning,
+      dt,
+    );
     this.memory.coverCommit = Math.max(0, this.memory.coverCommit - dt);
     this.memory.jinkPhase += dt;
 
@@ -139,6 +149,8 @@ export class AiController implements InputSource {
       const chosen = chooseAction(this.brain, ctx, this.currentAction);
       if (chosen !== this.currentAction) this.clearDestinations();
       this.currentAction = chosen;
+      // Items are chosen alongside the action, never re-decided mid-tick.
+      this.pendingItem = this.brain.chooseItem?.(ctx) ?? NO_ITEM;
     }
 
     const intent = self.alive ? this.currentAction.act(ctx) : coast();
@@ -161,6 +173,7 @@ export class AiController implements InputSource {
     this.clearDestinations();
     this.currentAction = null;
     this.sinceDecision = Number.POSITIVE_INFINITY;
+    this.pendingItem = NO_ITEM;
     this.aimYaw = self.aimYaw;
     this.aimPitch = self.aimPitch;
   }
@@ -183,7 +196,9 @@ export class AiController implements InputSource {
       aimPitch: this.aimPitch,
       boost: intent.boost && self.boostFuel > this.config.flight.boostMinToEngage,
       fire: intent.fire && this.rng.next() < this.tuning.fireWillingness,
+      useItem: this.pendingItem,
     };
+    this.pendingItem = NO_ITEM;
 
     if (intent.moveTo) {
       let direction = normalize(sub(intent.moveTo, self.pos));

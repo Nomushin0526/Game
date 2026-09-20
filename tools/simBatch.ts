@@ -103,6 +103,12 @@ interface Tally {
   runnerHits: number;
   /** Rounds that hit the safety cap without the rules deciding anything. */
   unresolved: number;
+  /** Charges spent, by item kind. */
+  itemsUsed: Record<string, number>;
+  /** Decoys shot down rather than left to expire. */
+  decoysPopped: number;
+  /** Times a craft was blinded by a flash. */
+  blindings: number;
 }
 
 function emptyTally(): Tally {
@@ -117,6 +123,9 @@ function emptyTally(): Tally {
     runnerShots: 0,
     runnerHits: 0,
     unresolved: 0,
+    itemsUsed: {},
+    decoysPopped: 0,
+    blindings: 0,
   };
 }
 
@@ -182,7 +191,21 @@ function playRound(
 
   let ticks = 0;
   while (world.match.phase === 'live' && ticks < maxTicks) {
-    world.step(controllers.map((c) => c.sample(dt)));
+    for (const event of world.step(controllers.map((c) => c.sample(dt)))) {
+      switch (event.type) {
+        case 'itemUsed':
+          tally.itemsUsed[event.kind] = (tally.itemsUsed[event.kind] ?? 0) + 1;
+          break;
+        case 'decoyGone':
+          if (event.popped) tally.decoysPopped++;
+          break;
+        case 'blinded':
+          tally.blindings++;
+          break;
+        default:
+          break;
+      }
+    }
     ticks++;
   }
 
@@ -201,6 +224,18 @@ function playRound(
   if (result.winnerTeam === 'hunter') tally.hunterWins++;
   else if (result.winnerTeam === 'runner') tally.runnerWins++;
   else tally.draws++;
+}
+
+/** Per-round item usage, so a kit can be tuned on how much it actually gets used. */
+function itemLine(tally: Tally, rounds: number): string {
+  const kinds = Object.keys(tally.itemsUsed);
+  if (kinds.length === 0) return '';
+  const per = (n: number): string => (n / Math.max(rounds, 1)).toFixed(2);
+  const used = kinds.map((kind) => `${kind} ${per(tally.itemsUsed[kind]!)}`).join('  ');
+  return (
+    `items/round   ${used}  ` +
+    `| decoys shot ${per(tally.decoysPopped)}  blindings ${per(tally.blindings)}`
+  );
 }
 
 function report(args: Args, tally: Tally, elapsedMs: number): void {
@@ -230,6 +265,7 @@ function report(args: Args, tally: Tally, elapsedMs: number): void {
     `avg round     ${(tally.totalSeconds / Math.max(args.matches, 1)).toFixed(1)}s`,
     `accuracy      hunter ${accuracy(tally.hunterHits, tally.hunterShots)}  ` +
       `runner ${accuracy(tally.runnerHits, tally.runnerShots)}`,
+    itemLine(tally, args.matches),
     tally.unresolved > 0 ? `unresolved    ${tally.unresolved} (hit the tick cap)` : '',
     `simulated in  ${(elapsedMs / 1000).toFixed(1)}s`,
     '',

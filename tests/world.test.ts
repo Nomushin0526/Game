@@ -4,7 +4,7 @@ import { CONFIG, cloneConfig } from '../src/sim/config.ts';
 import { distance } from '../src/sim/math.ts';
 import { initPhysics } from '../src/sim/physics.ts';
 import { Rng } from '../src/sim/rng.ts';
-import { neutralInput, type PlayerInput } from '../src/sim/types.ts';
+import { NO_ITEM, neutralInput, type PlayerInput } from '../src/sim/types.ts';
 import { World } from '../src/sim/world.ts';
 
 const map = loadMap('city01');
@@ -24,6 +24,7 @@ function scriptedInputs(seed: number, ticks: number): PlayerInput[][] {
       aimPitch: rng.range(-1, 1),
       fire: rng.bool(0.3),
       boost: rng.bool(0.4),
+      useItem: rng.bool(0.05) ? rng.int(0, 2) : NO_ITEM,
     })));
   }
   return script;

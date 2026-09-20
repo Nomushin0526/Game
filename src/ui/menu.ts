@@ -35,7 +35,12 @@ export function showMenu(root: HTMLElement, defaults: MenuDefaults): Promise<Mat
 
     panel.append(
       el('h1', 'title', 'SKY TAG'),
-      el('p', 'subtitle', '空中鬼ごっこ — 鬼は速く重い。逃亡者は時間まで逃げ切れば勝ち。'),
+      el(
+        'p',
+        'subtitle',
+        '空中鬼ごっこ — 鬼は速く重い。逃亡者は時間まで逃げ切れば勝ち。' +
+          '逃亡者はデコイ・シールド・フラッシュを持つ。',
+      ),
     );
 
     const mapSelect = el('select', 'field-input') as HTMLSelectElement;
@@ -151,8 +156,8 @@ export function showMatchResult(
 
 function controlsText(): string {
   return (
-    'KB+マウス: WASD 移動 / Space 上昇 / Ctrl 下降 / Shift ブースト / 左クリック 射撃 — ' +
-    'ゲームパッド: 左スティック 移動 / RB 上昇 / LB 下降 / 右スティック 視点 / RT 射撃 / LT ブースト'
+    'KB+マウス: WASD 移動 / Space 上昇 / Ctrl 下降 / Shift ブースト / 左クリック 射撃 / 1・2・3 アイテム — ' +
+    'ゲームパッド: 左スティック 移動 / RB 上昇 / LB 下降 / 右スティック 視点 / RT 射撃 / LT ブースト / A・B・X アイテム'
   );
 }
 

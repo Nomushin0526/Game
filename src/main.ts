@@ -135,6 +135,7 @@ async function runMatch(
 
       const alpha = accumulator / fixedDt;
       renderer.syncEntities(world.entities, previousPositions, alpha);
+      renderer.syncDecoys(world.decoys, world.config.items.decoy);
       effects.syncProjectiles(world.projectiles, alpha, fixedDt);
       effects.update(frameTime);
       drawPlayers(renderer, players, world, previousPositions, alpha, frameTime);

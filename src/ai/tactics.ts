@@ -79,6 +79,21 @@ export function aimPoint(
 }
 
 /**
+ * Where to shoot, given what the AI believes it is looking at.
+ *
+ * A proper interception solve needs the target's real velocity, which the AI
+ * only has for a craft it is genuinely tracking. While it is chasing a decoy,
+ * or working from memory, it shoots at the remembered point instead — which is
+ * exactly the mistake the decoy is for.
+ */
+export function shotTarget(ctx: BrainContext): Vec3 | null {
+  if (ctx.enemy && ctx.perception.visible && !ctx.perception.fooled) {
+    return aimPoint(ctx.self, ctx.enemy, ctx.tuning, ctx.config);
+  }
+  return ctx.estimate;
+}
+
+/**
  * A nearby point with no line of sight to `threat`.
  *
  * When nothing sampled is genuinely hidden — normal up in the open sky — it

@@ -84,7 +84,7 @@ class Range {
     const ticks = Math.round(seconds * this.config.sim.tickRate);
     for (let i = 0; i < ticks; i++) {
       produced.push(...stepWeapon(craft, cmd, this.weaponCtx));
-      const flown = stepProjectiles(this.projectiles, [craft, ...others], this.projectileCtx);
+      const flown = stepProjectiles(this.projectiles, [craft, ...others], [], this.projectileCtx);
       this.projectiles.length = 0;
       this.projectiles.push(...flown.survivors);
       produced.push(...flown.events);
@@ -279,7 +279,7 @@ describe('bolts in flight', () => {
     let live = [bolt];
     let struck = false;
     for (let i = 0; i < 240 && live.length > 0; i++) {
-      const result = stepProjectiles(live, [s, t], ctx);
+      const result = stepProjectiles(live, [s, t], [], ctx);
       live = result.survivors;
       if (result.events.some((e) => e.type === 'projectileHit' && e.hitEntityId === 1)) struck = true;
     }
@@ -322,7 +322,7 @@ describe('bolts in flight', () => {
     for (let i = 0; i < 240 && live.length > 0; i++) {
       // The target sidesteps at cruise speed while the bolt is in the air.
       t.pos.z += CONFIG.loadout.runner.cruiseSpeed * CONFIG.sim.fixedDt;
-      live = stepProjectiles(live, [s, t], ctx).survivors;
+      live = stepProjectiles(live, [s, t], [], ctx).survivors;
     }
     expect(t.hp).toBe(CONFIG.loadout.runner.maxHp);
   });

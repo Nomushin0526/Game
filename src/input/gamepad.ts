@@ -7,7 +7,7 @@
 
 import { CONFIG, type SkyTagConfig } from '../sim/config.ts';
 import { clamp, wrapAngle } from '../sim/math.ts';
-import { neutralInput, type PlayerInput } from '../sim/types.ts';
+import { NO_ITEM, neutralInput, type PlayerInput } from '../sim/types.ts';
 import type { InputSource } from './types.ts';
 
 /** Standard-mapping indices (https://w3c.github.io/gamepad/#remapping). */
@@ -19,6 +19,8 @@ const BUTTON_LB = 4;
 const BUTTON_RB = 5;
 const BUTTON_LT = 6;
 const BUTTON_RT = 7;
+/** Face buttons, one per item slot: A, B, X in standard mapping order. */
+const ITEM_BUTTONS = [0, 1, 2];
 
 /** Analog triggers count as pressed past this much travel. */
 const TRIGGER_THRESHOLD = 0.35;
@@ -29,6 +31,8 @@ export class GamepadInput implements InputSource {
   private yaw: number;
   private pitch = 0;
   private invertY: boolean;
+  /** Face buttons held at the previous sample, for edge detection. */
+  private heldItems = new Set<number>();
 
   constructor(
     private readonly index: number,
@@ -51,7 +55,10 @@ export class GamepadInput implements InputSource {
 
   sample(dt: number): PlayerInput {
     const pad = this.pad;
-    if (!pad) return { ...neutralInput(), aimYaw: this.yaw, aimPitch: this.pitch };
+    if (!pad) {
+      this.heldItems.clear();
+      return { ...neutralInput(), aimYaw: this.yaw, aimPitch: this.pitch };
+    }
 
     const move = stickVector(
       axis(pad, AXIS_LEFT_X),
@@ -84,7 +91,21 @@ export class GamepadInput implements InputSource {
       aimPitch: this.pitch,
       fire: pressed(pad, BUTTON_RT),
       boost: pressed(pad, BUTTON_LT),
+      useItem: this.pickItem(pad),
     };
+  }
+
+  /** The item slot newly pressed this sample, or `NO_ITEM`. */
+  private pickItem(pad: Gamepad): number {
+    let used = NO_ITEM;
+    for (const [slot, button] of ITEM_BUTTONS.entries()) {
+      const down = pressed(pad, button);
+      // Edge-triggered: a held button spends one charge, not one per tick.
+      if (down && !this.heldItems.has(button) && used === NO_ITEM) used = slot;
+      if (down) this.heldItems.add(button);
+      else this.heldItems.delete(button);
+    }
+    return used;
   }
 
   setAim(yaw: number, pitch = this.pitch): void {

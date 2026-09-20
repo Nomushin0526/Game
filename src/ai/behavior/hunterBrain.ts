@@ -8,7 +8,7 @@
 
 import { add, distance, normalize, scale, sub } from '../../sim/math.ts';
 import type { Vec3 } from '../../sim/types.ts';
-import { aimPoint, canShoot, findCover, sampleArena, searchPoint } from '../tactics.ts';
+import { canShoot, findCover, sampleArena, searchPoint, shotTarget } from '../tactics.ts';
 import type { Action, Brain, BrainContext, Intent } from '../types.ts';
 
 /** Distance at which the hunter commits to a tag instead of shooting. */
@@ -38,9 +38,7 @@ const pursue: Action = {
   act(ctx): Intent {
     const target = bestGuess(ctx);
     const goal = ctx.nav.steer(ctx.self.pos, target, ctx.dt);
-    const shootAt = ctx.enemy && ctx.perception.acquired
-      ? aimPoint(ctx.self, ctx.enemy, ctx.tuning, ctx.config)
-      : target;
+    const shootAt = (ctx.perception.acquired ? shotTarget(ctx) : null) ?? target;
 
     return {
       moveTo: goal,
@@ -66,10 +64,11 @@ const duel: Action = {
   },
   act(ctx): Intent {
     const enemy = ctx.enemy;
-    if (!enemy) return { moveTo: bestGuess(ctx), lookAt: null, fire: false, boost: false };
+    const shootAt = shotTarget(ctx);
+    if (!enemy || !shootAt) return { moveTo: bestGuess(ctx), lookAt: null, fire: false, boost: false };
 
-    const shootAt = aimPoint(ctx.self, enemy, ctx.tuning, ctx.config);
-    const hold = holdRange(ctx, enemy.pos, ctx.tuning.preferredRange);
+    // Hold range against what it believes it is fighting, decoy or not.
+    const hold = holdRange(ctx, ctx.estimate ?? enemy.pos, ctx.tuning.preferredRange);
 
     return {
       moveTo: ctx.nav.steer(ctx.self.pos, hold, ctx.dt),

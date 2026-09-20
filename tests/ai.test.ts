@@ -124,7 +124,7 @@ describe('Perception', () => {
     const p = new Perception();
     const self = craft({ x: -100, y: 100, z: 0 }, FACE_PLUS_X);
     const enemy = createEntity(1, 'runner', { x: -40, y: 100, z: 0 }, CONFIG);
-    p.update(self, enemy, physics, CONFIG, tuning, dt);
+    p.update(self, enemy, [], physics, CONFIG, tuning, dt);
     expect(p.visible).toBe(true);
   });
 
@@ -132,7 +132,7 @@ describe('Perception', () => {
     const p = new Perception();
     const self = craft({ x: -100, y: 100, z: 0 }, FACE_PLUS_X);
     const behind = createEntity(1, 'runner', { x: -160, y: 100, z: 0 }, CONFIG);
-    p.update(self, behind, physics, CONFIG, tuning, dt);
+    p.update(self, behind, [], physics, CONFIG, tuning, dt);
     expect(p.visible).toBe(false);
   });
 
@@ -140,7 +140,7 @@ describe('Perception', () => {
     const p = new Perception();
     const self = craft({ x: -40, y: 60, z: 0 }, FACE_PLUS_X);
     const enemy = createEntity(1, 'runner', { x: 40, y: 60, z: 0 }, CONFIG);
-    p.update(self, enemy, physics, CONFIG, tuning, dt);
+    p.update(self, enemy, [], physics, CONFIG, tuning, dt);
     expect(p.visible).toBe(false);
   });
 
@@ -148,11 +148,11 @@ describe('Perception', () => {
     const p = new Perception();
     const self = craft({ x: -190, y: 100, z: 0 }, FACE_PLUS_X);
     const far = createEntity(1, 'runner', { x: 190, y: 100, z: 0 }, CONFIG);
-    p.update(self, far, physics, CONFIG, tuning, dt);
+    p.update(self, far, [], physics, CONFIG, tuning, dt);
     expect(p.visible).toBe(false);
 
     const near = createEntity(1, 'runner', { x: -40, y: 100, z: 0 }, CONFIG);
-    p.update(self, near, physics, CONFIG, tuning, dt);
+    p.update(self, near, [], physics, CONFIG, tuning, dt);
     expect(p.visible).toBe(true);
   });
 
@@ -162,12 +162,12 @@ describe('Perception', () => {
     const self = craft({ x: -100, y: 100, z: 0 }, FACE_PLUS_X);
     const enemy = createEntity(1, 'runner', { x: -40, y: 100, z: 0 }, CONFIG);
 
-    p.update(self, enemy, physics, CONFIG, slow, dt);
+    p.update(self, enemy, [], physics, CONFIG, slow, dt);
     expect(p.visible).toBe(true);
     expect(p.acquired).toBe(false);
 
     for (let i = 0; i < Math.ceil(slow.reactionTime / dt) + 1; i++) {
-      p.update(self, enemy, physics, CONFIG, slow, dt);
+      p.update(self, enemy, [], physics, CONFIG, slow, dt);
     }
     expect(p.acquired).toBe(true);
   });
@@ -178,23 +178,23 @@ describe('Perception', () => {
     const enemy = createEntity(1, 'runner', { x: -40, y: 100, z: 0 }, CONFIG);
     enemy.vel = { x: 10, y: 0, z: 0 };
 
-    p.update(self, enemy, physics, CONFIG, tuning, dt);
+    p.update(self, enemy, [], physics, CONFIG, tuning, dt);
     expect(p.lastSeen).not.toBeNull();
 
     // Turn away so it is out of the cone.
     self.aimYaw = Math.PI / 2;
-    p.update(self, enemy, physics, CONFIG, tuning, dt);
+    p.update(self, enemy, [], physics, CONFIG, tuning, dt);
     expect(p.visible).toBe(false);
     expect(p.hasMemory(CONFIG)).toBe(true);
     expect(p.confidence(CONFIG)).toBeGreaterThan(0.9);
 
     // The estimate is carried forward along the remembered velocity.
-    for (let i = 0; i < 60; i++) p.update(self, enemy, physics, CONFIG, tuning, dt);
+    for (let i = 0; i < 60; i++) p.update(self, enemy, [], physics, CONFIG, tuning, dt);
     const guess = p.estimate(enemy, CONFIG)!;
     expect(guess.x).toBeGreaterThan(-40);
 
     for (let i = 0; i < CONFIG.ai.memoryDuration / dt; i++) {
-      p.update(self, enemy, physics, CONFIG, tuning, dt);
+      p.update(self, enemy, [], physics, CONFIG, tuning, dt);
     }
     expect(p.hasMemory(CONFIG)).toBe(false);
     expect(p.estimate(enemy, CONFIG)).toBeNull();
@@ -206,7 +206,7 @@ describe('Perception', () => {
     const self = craft({ x: -100, y: 100, z: 0 }, FACE_PLUS_X);
     const dead = createEntity(1, 'runner', { x: -40, y: 100, z: 0 }, CONFIG);
     dead.alive = false;
-    p.update(self, dead, physics, CONFIG, tuning, dt);
+    p.update(self, dead, [], physics, CONFIG, tuning, dt);
     expect(p.visible).toBe(false);
   });
 });

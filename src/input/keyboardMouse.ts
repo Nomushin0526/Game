@@ -9,7 +9,7 @@
 import type { SkyTagConfig } from '../sim/config.ts';
 import { CONFIG } from '../sim/config.ts';
 import { clamp, wrapAngle } from '../sim/math.ts';
-import { neutralInput, type PlayerInput } from '../sim/types.ts';
+import { NO_ITEM, neutralInput, type PlayerInput } from '../sim/types.ts';
 import type { InputSource } from './types.ts';
 
 export interface KeyBindings {
@@ -20,6 +20,8 @@ export interface KeyBindings {
   up: string[];
   down: string[];
   boost: string[];
+  /** One key per item slot, in slot order. */
+  items: string[];
 }
 
 export const DEFAULT_BINDINGS: KeyBindings = {
@@ -30,6 +32,7 @@ export const DEFAULT_BINDINGS: KeyBindings = {
   up: ['Space'],
   down: ['ControlLeft', 'ControlRight'],
   boost: ['ShiftLeft', 'ShiftRight'],
+  items: ['Digit1', 'Digit2', 'Digit3'],
 };
 
 export class KeyboardMouseInput implements InputSource {
@@ -40,6 +43,13 @@ export class KeyboardMouseInput implements InputSource {
   private yaw = 0;
   private pitch = 0;
   private firing = false;
+  /**
+   * Item slot pressed since the last sample, or `NO_ITEM`.
+   *
+   * Latched on key down and cleared when read, so one press spends exactly one
+   * charge no matter how the key press lines up with the fixed tick.
+   */
+  private queuedItem = NO_ITEM;
   private disposers: Array<() => void> = [];
 
   constructor(
@@ -81,7 +91,14 @@ export class KeyboardMouseInput implements InputSource {
       aimPitch: this.pitch,
       fire: this.firing,
       boost: this.anyHeld(this.bindings.boost),
+      useItem: this.takeQueuedItem(),
     };
+  }
+
+  private takeQueuedItem(): number {
+    const queued = this.queuedItem;
+    this.queuedItem = NO_ITEM;
+    return queued;
   }
 
   /** Align the view with a freshly spawned craft. */
@@ -96,6 +113,12 @@ export class KeyboardMouseInput implements InputSource {
 
   private attach(): void {
     const onKeyDown = (e: KeyboardEvent): void => {
+      // Latch on the transition, not while held: repeat events would otherwise
+      // queue a fresh use every frame the key is down.
+      if (!this.held.has(e.code)) {
+        const slot = this.bindings.items.indexOf(e.code);
+        if (slot >= 0) this.queuedItem = slot;
+      }
       this.held.add(e.code);
       // Space and Ctrl would otherwise scroll the page or open browser menus.
       if (e.code === 'Space' || e.code.startsWith('Control')) e.preventDefault();
@@ -105,6 +128,7 @@ export class KeyboardMouseInput implements InputSource {
     const onBlur = (): void => {
       this.held.clear();
       this.firing = false;
+      this.queuedItem = NO_ITEM;
     };
 
     const onMouseMove = (e: MouseEvent): void => {

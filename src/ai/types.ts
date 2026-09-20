@@ -21,6 +21,10 @@ export interface Intent {
   boost: boolean;
 }
 
+/** Item slot to spend, or `NO_ITEM`. Separate from `Intent` because items are
+ *  chosen once per decision rather than re-decided every tick. */
+export type ItemChoice = number;
+
 /**
  * Scratch space that survives between ticks.
  *
@@ -105,6 +109,8 @@ export interface Action {
 
 export interface Brain {
   readonly actions: readonly Action[];
+  /** Which consumable to spend now, if any. Evaluated on decision ticks only. */
+  chooseItem?(ctx: BrainContext): ItemChoice;
 }
 
 export function coast(): Intent {

@@ -9,7 +9,7 @@
 import type { AiTuning, SkyTagConfig } from '../sim/config.ts';
 import { add, distance, dot, forwardVector, normalize, scale, sub } from '../sim/math.ts';
 import type { PhysicsWorld } from '../sim/physics.ts';
-import type { EntityState, Vec3 } from '../sim/types.ts';
+import type { DecoyState, EntityState, Vec3 } from '../sim/types.ts';
 
 /** How far ahead a remembered velocity is extrapolated, seconds. */
 const MAX_DEAD_RECKONING = 2.0;
@@ -33,22 +33,27 @@ export class Perception {
   timeSinceSeen = Number.POSITIVE_INFINITY;
   /** Seconds the enemy has been continuously visible. */
   visibleFor = 0;
+  /** True while what is being tracked is actually a decoy. */
+  fooled = false;
 
   update(
     self: EntityState,
     enemy: EntityState | undefined,
+    decoys: readonly DecoyState[],
     physics: PhysicsWorld,
     config: SkyTagConfig,
     tuning: AiTuning,
     dt: number,
   ): void {
     const wasVisible = this.visible;
-    this.visible = Boolean(enemy) && this.canSee(self, enemy!, physics, config);
+    const contact = this.pickContact(self, enemy, decoys, physics, config);
+    this.visible = contact !== null;
+    this.fooled = contact?.decoy ?? false;
 
-    if (this.visible) {
+    if (contact) {
       this.visibleFor = wasVisible ? this.visibleFor + dt : 0;
       this.timeSinceSeen = 0;
-      this.lastSeen = { pos: { ...enemy!.pos }, vel: { ...enemy!.vel } };
+      this.lastSeen = { pos: { ...contact.pos }, vel: { ...contact.vel } };
       this.acquired = this.visibleFor >= tuning.reactionTime;
     } else {
       this.visibleFor = 0;
@@ -57,15 +62,55 @@ export class Perception {
     }
   }
 
+  /**
+   * Choose what the AI thinks it is looking at.
+   *
+   * Craft and decoys are indistinguishable to it, so when several are in view
+   * it keeps tracking whichever is nearest to what it was already following.
+   * That continuity is what makes a decoy work: dropped at the moment the
+   * runner breaks away, the phantom carries on along the course already being
+   * tracked and the real craft is the one that looks like the new contact.
+   */
+  private pickContact(
+    self: EntityState,
+    enemy: EntityState | undefined,
+    decoys: readonly DecoyState[],
+    physics: PhysicsWorld,
+    config: SkyTagConfig,
+  ): { pos: Vec3; vel: Vec3; decoy: boolean } | null {
+    // A flash takes the eyes entirely: no contact, and the clock on the last
+    // sighting keeps running.
+    if (self.blindTimer > 0) return null;
+
+    const candidates: Array<{ pos: Vec3; vel: Vec3; decoy: boolean }> = [];
+    if (enemy && this.canSee(self, enemy.pos, enemy.alive, physics, config)) {
+      candidates.push({ pos: enemy.pos, vel: enemy.vel, decoy: false });
+    }
+    for (const phantom of decoys) {
+      if (phantom.ownerId === self.id) continue;
+      if (!this.canSee(self, phantom.pos, true, physics, config)) continue;
+      candidates.push({ pos: phantom.pos, vel: phantom.vel, decoy: true });
+    }
+
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1 || !this.lastSeen) return candidates[0]!;
+
+    const anchor = this.lastSeen.pos;
+    return candidates.reduce((best, candidate) =>
+      distance(candidate.pos, anchor) < distance(best.pos, anchor) ? candidate : best,
+    );
+  }
+
   private canSee(
     self: EntityState,
-    enemy: EntityState,
+    target: Vec3,
+    targetAlive: boolean,
     physics: PhysicsWorld,
     config: SkyTagConfig,
   ): boolean {
-    if (!enemy.alive || !self.alive) return false;
+    if (!targetAlive || !self.alive) return false;
 
-    const toEnemy = sub(enemy.pos, self.pos);
+    const toEnemy = sub(target, self.pos);
     const range = Math.hypot(toEnemy.x, toEnemy.y, toEnemy.z);
     if (range < 1e-3) return true;
     if (range > config.ai.sightRange) return false;
@@ -75,7 +120,7 @@ export class Perception {
     const cosAngle = dot(forward, scale(toEnemy, 1 / range));
     if (cosAngle < Math.cos(config.ai.fovRad / 2)) return false;
 
-    return !physics.isBlocked(self.pos, enemy.pos);
+    return !physics.isBlocked(self.pos, target);
   }
 
   /** True while the remembered position is still worth acting on. */
@@ -88,7 +133,10 @@ export class Perception {
    * the last sighting carried forward along its velocity while it is fresh.
    */
   estimate(enemy: EntityState | undefined, config: SkyTagConfig): Vec3 | null {
-    if (this.visible && enemy) return { ...enemy.pos };
+    // While fooled, the estimate is the phantom's position, which is the
+    // whole point — so it comes from `lastSeen` rather than the real craft.
+    if (this.visible && !this.fooled && enemy) return { ...enemy.pos };
+    if (this.visible && this.lastSeen) return { ...this.lastSeen.pos };
     if (!this.hasMemory(config) || !this.lastSeen) return null;
 
     const elapsed = Math.min(this.timeSinceSeen, MAX_DEAD_RECKONING);
@@ -116,6 +164,7 @@ export class Perception {
   reset(): void {
     this.visible = false;
     this.acquired = false;
+    this.fooled = false;
     this.lastSeen = null;
     this.timeSinceSeen = Number.POSITIVE_INFINITY;
     this.visibleFor = 0;

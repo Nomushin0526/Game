@@ -1,6 +1,7 @@
 /** Construction of craft state, shared by the world, the tools and the tests. */
 
 import type { SkyTagConfig } from './config.ts';
+import { createItemSlots } from './items.ts';
 import type { EntityState, Team, Vec3 } from './types.ts';
 
 /** A craft at full health with a full gauge and a cold gun. */
@@ -29,6 +30,10 @@ export function createEntity(
     fireCooldown: 0,
     sinceLastShot: Number.POSITIVE_INFINITY,
     invulnTimer: 0,
+    items: createItemSlots(team, config),
+    shieldTimer: 0,
+    shieldPool: 0,
+    blindTimer: 0,
     shotsFired: 0,
     shotsHit: 0,
     alive: true,

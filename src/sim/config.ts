@@ -34,12 +34,11 @@ export interface LoadoutConfig {
    * Bolt speed, metres per second.
    *
    * The ratio of this to craft speed is what decides how much distance costs
-   * accuracy, and it turned out to be the only setting that moves the balance
-   * at all — see the measurements in README.md. These values put all three
-   * difficulty tiers inside the design's 45-55% band. They are deliberately
-   * low: a bolt outruns a cruising craft roughly threefold but a boosting one
-   * only by a third, so shooting someone running flat out away from you is not
-   * really on, and the chase has to do the work instead.
+   * accuracy, and before the runner had items it was the only setting that
+   * moved the balance at all — see README.md. Giving the runner a way to break
+   * contact bought back roughly 25 points of bolt speed: at 90 m/s a bolt
+   * outruns a boosting craft about twofold and still reads as fast, where the
+   * balance previously demanded 65 and a bolt you could nearly keep pace with.
    */
   projectileSpeed: number;
   /** Level-flight speed in m/s. */
@@ -50,6 +49,57 @@ export interface LoadoutConfig {
   boostDrain: number;
   /** Gauge units regained per second when not boosting. */
   boostRegen: number;
+}
+
+/** Consumables a craft carries into a round (DESIGN.md has none of these yet). */
+export type ItemKind = 'decoy' | 'shield' | 'flash';
+
+interface ItemBase {
+  /** Uses available per round. */
+  charges: number;
+  /** Seconds before the slot can be used again. */
+  cooldown: number;
+}
+
+export interface DecoyConfig extends ItemBase {
+  /** Seconds the phantom persists before fading out. */
+  duration: number;
+  /** Fraction of the thrower's velocity the decoy sets off with. */
+  inheritVelocity: number;
+  /** Speed it flies at when the thrower was barely moving, m/s. */
+  minSpeed: number;
+  /** A bolt that reaches a decoy pops it; this is its hittable radius. */
+  hitRadius: number;
+}
+
+export interface ShieldConfig extends ItemBase {
+  /** Seconds of protection. */
+  duration: number;
+  /**
+   * Damage the shield can soak before it breaks early.
+   * A pure timer would make the right play "pop it and ignore the fight";
+   * a pool means a runner that stands and takes fire loses it anyway.
+   */
+  capacity: number;
+}
+
+export interface FlashConfig extends ItemBase {
+  /** Seconds between the throw and the burst. */
+  fuse: number;
+  /** How fast it is lobbed, m/s. */
+  throwSpeed: number;
+  /** Blast radius, metres. */
+  radius: number;
+  /** Seconds the victim is blinded. */
+  blindDuration: number;
+}
+
+export interface ItemsConfig {
+  /** Slot order per side. An empty list means that side carries nothing. */
+  loadout: Record<Team, ItemKind[]>;
+  decoy: DecoyConfig;
+  shield: ShieldConfig;
+  flash: FlashConfig;
 }
 
 export interface WeaponConfig {
@@ -223,6 +273,7 @@ export interface SkyTagConfig {
   arena: ArenaConfig;
   flight: FlightConfig;
   weapon: WeaponConfig;
+  items: ItemsConfig;
   rules: RulesConfig;
   input: InputConfig;
   hud: HudConfig;
@@ -262,6 +313,35 @@ export const CONFIG: SkyTagConfig = {
     heatDecay: 5,
     heatDecayDelay: 0.6,
     muzzleOffset: 2.2,
+  },
+  items: {
+    loadout: {
+      // The hunter's kit is deliberately empty for now.
+      hunter: [],
+      runner: ['decoy', 'shield', 'flash'],
+    },
+    decoy: {
+      charges: 2,
+      cooldown: 12,
+      duration: 8,
+      inheritVelocity: 1,
+      minSpeed: 18,
+      hitRadius: 2.2,
+    },
+    shield: {
+      charges: 2,
+      cooldown: 16,
+      duration: 4,
+      capacity: 40,
+    },
+    flash: {
+      charges: 2,
+      cooldown: 14,
+      fuse: 0.9,
+      throwSpeed: 45,
+      radius: 45,
+      blindDuration: 2.2,
+    },
   },
   rules: {
     timeLimit: 180,
@@ -341,7 +421,7 @@ export const CONFIG: SkyTagConfig = {
       heatCapacity: 20,
       cooldownTime: 3,
       range: 130,
-      projectileSpeed: 65,
+      projectileSpeed: 90,
       cruiseSpeed: 25,
       boostMultiplier: 1.95,
       boostDrain: 32,
@@ -356,7 +436,7 @@ export const CONFIG: SkyTagConfig = {
       heatCapacity: 20,
       cooldownTime: 3,
       range: 110,
-      projectileSpeed: 58,
+      projectileSpeed: 81,
       cruiseSpeed: 22,
       boostMultiplier: 1.85,
       boostDrain: 26,

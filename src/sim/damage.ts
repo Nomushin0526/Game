@@ -23,6 +23,22 @@ export function applyDamage(
   // Immunity covers incoming fire only: you cannot dodge your own crash.
   if (cause === 'beam' && target.invulnTimer > 0) return [];
 
+  // A shield soaks beam damage until its pool runs out, then breaks. Crash
+  // damage goes straight through: it is the price of flying badly, not an
+  // attack to be blocked.
+  if (cause === 'beam' && target.shieldTimer > 0) {
+    const soaked = Math.min(amount, target.shieldPool);
+    target.shieldPool -= soaked;
+    amount -= soaked;
+    if (target.shieldPool <= 0) {
+      target.shieldTimer = 0;
+      target.shieldPool = 0;
+    }
+    if (amount <= 0) {
+      return [{ type: 'shieldAbsorbed', entityId: target.id, amount: soaked, broke: target.shieldTimer === 0, pos: { ...target.pos } }];
+    }
+  }
+
   target.hp = Math.max(0, target.hp - amount);
   if (cause === 'beam') target.invulnTimer = config.rules.hitInvulnerability;
 

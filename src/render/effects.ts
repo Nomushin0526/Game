@@ -24,6 +24,7 @@ const BOLT_LENGTH = 5;
 const SPARK_LIFETIME = 0.35;
 const CRASH_LIFETIME = 0.5;
 const DEATH_LIFETIME = 1.1;
+const FLASH_LIFETIME = 0.55;
 
 interface Active {
   mesh: THREE.Mesh;
@@ -78,6 +79,21 @@ export class Effects {
           break;
         case 'death':
           this.addPuff(event.pos, 1.5, 11, DEATH_LIFETIME, 0xff6a3a);
+          break;
+        case 'flashBurst':
+          // Sized to the real blast radius, so you can see who it caught.
+          this.addPuff(event.pos, 1, event.radius, FLASH_LIFETIME, 0xffffff);
+          break;
+        case 'itemUsed':
+          if (event.kind === 'decoy') this.addPuff(event.pos, 1, 5, SPARK_LIFETIME, 0x9fe8ff);
+          if (event.kind === 'shield') this.addPuff(event.pos, 2, 6, SPARK_LIFETIME, 0x7fd4ff);
+          break;
+        case 'shieldAbsorbed':
+          this.addPuff(event.pos, 3.5, event.broke ? 7 : 5, SPARK_LIFETIME, 0x7fd4ff);
+          break;
+        case 'decoyGone':
+          // Only a popped decoy bursts; an expired one just fades out.
+          if (event.popped) this.addPuff(event.pos, 1, 6, SPARK_LIFETIME, 0x9fe8ff);
           break;
         default:
           break;
