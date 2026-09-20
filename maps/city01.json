@@ -1,0 +1,679 @@
+{
+  "id": "city01",
+  "name": "Downtown 01",
+  "size": {
+    "x": 400,
+    "z": 400
+  },
+  "ceiling": 150,
+  "floor": 0,
+  "spawns": [
+    {
+      "x": -170,
+      "y": 60,
+      "z": -170
+    },
+    {
+      "x": 170,
+      "y": 60,
+      "z": 170
+    },
+    {
+      "x": -170,
+      "y": 95,
+      "z": 170
+    },
+    {
+      "x": 170,
+      "y": 95,
+      "z": -170
+    },
+    {
+      "x": 0,
+      "y": 135,
+      "z": -175
+    },
+    {
+      "x": 0,
+      "y": 135,
+      "z": 175
+    },
+    {
+      "x": -178,
+      "y": 30,
+      "z": 0
+    },
+    {
+      "x": 178,
+      "y": 30,
+      "z": 0
+    }
+  ],
+  "solids": [
+    {
+      "shape": "box",
+      "pos": {
+        "x": -124,
+        "y": 9,
+        "z": -124
+      },
+      "size": {
+        "x": 30,
+        "y": 18,
+        "z": 30
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -124,
+        "y": 13,
+        "z": -62
+      },
+      "size": {
+        "x": 33,
+        "y": 26,
+        "z": 37
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -124,
+        "y": 17,
+        "z": 0
+      },
+      "size": {
+        "x": 36,
+        "y": 34,
+        "z": 35
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -124,
+        "y": 13,
+        "z": 62
+      },
+      "size": {
+        "x": 30,
+        "y": 26,
+        "z": 33
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -124,
+        "y": 9,
+        "z": 124
+      },
+      "size": {
+        "x": 33,
+        "y": 18,
+        "z": 31
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -62,
+        "y": 13,
+        "z": -124
+      },
+      "size": {
+        "x": 37,
+        "y": 26,
+        "z": 33
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -62,
+        "y": 24,
+        "z": -62
+      },
+      "size": {
+        "x": 31,
+        "y": 48,
+        "z": 31
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -62,
+        "y": 36,
+        "z": 0
+      },
+      "size": {
+        "x": 34,
+        "y": 72,
+        "z": 38
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "cylinder",
+      "pos": {
+        "x": -62,
+        "y": 81,
+        "z": 0
+      },
+      "radius": 1.4,
+      "height": 18,
+      "tag": "prop"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -62,
+        "y": 24,
+        "z": 62
+      },
+      "size": {
+        "x": 37,
+        "y": 48,
+        "z": 36
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -62,
+        "y": 13,
+        "z": 124
+      },
+      "size": {
+        "x": 31,
+        "y": 26,
+        "z": 34
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 0,
+        "y": 17,
+        "z": -124
+      },
+      "size": {
+        "x": 35,
+        "y": 34,
+        "z": 36
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 0,
+        "y": 36,
+        "z": -62
+      },
+      "size": {
+        "x": 38,
+        "y": 72,
+        "z": 34
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "cylinder",
+      "pos": {
+        "x": 0,
+        "y": 81,
+        "z": -62
+      },
+      "radius": 1.4,
+      "height": 18,
+      "tag": "prop"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 0,
+        "y": 44,
+        "z": 0
+      },
+      "size": {
+        "x": 32,
+        "y": 88,
+        "z": 32
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "cylinder",
+      "pos": {
+        "x": 0,
+        "y": 97,
+        "z": 0
+      },
+      "radius": 1.4,
+      "height": 18,
+      "tag": "prop"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 0,
+        "y": 36,
+        "z": 62
+      },
+      "size": {
+        "x": 35,
+        "y": 72,
+        "z": 30
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "cylinder",
+      "pos": {
+        "x": 0,
+        "y": 81,
+        "z": 62
+      },
+      "radius": 1.4,
+      "height": 18,
+      "tag": "prop"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 0,
+        "y": 17,
+        "z": 124
+      },
+      "size": {
+        "x": 38,
+        "y": 34,
+        "z": 37
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 62,
+        "y": 13,
+        "z": -124
+      },
+      "size": {
+        "x": 33,
+        "y": 26,
+        "z": 30
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 62,
+        "y": 24,
+        "z": -62
+      },
+      "size": {
+        "x": 36,
+        "y": 48,
+        "z": 37
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 62,
+        "y": 36,
+        "z": 0
+      },
+      "size": {
+        "x": 30,
+        "y": 72,
+        "z": 35
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "cylinder",
+      "pos": {
+        "x": 62,
+        "y": 81,
+        "z": 0
+      },
+      "radius": 1.4,
+      "height": 18,
+      "tag": "prop"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 62,
+        "y": 24,
+        "z": 62
+      },
+      "size": {
+        "x": 33,
+        "y": 48,
+        "z": 33
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 62,
+        "y": 13,
+        "z": 124
+      },
+      "size": {
+        "x": 36,
+        "y": 26,
+        "z": 31
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 124,
+        "y": 9,
+        "z": -124
+      },
+      "size": {
+        "x": 31,
+        "y": 18,
+        "z": 33
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 124,
+        "y": 13,
+        "z": -62
+      },
+      "size": {
+        "x": 34,
+        "y": 26,
+        "z": 31
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 124,
+        "y": 17,
+        "z": 0
+      },
+      "size": {
+        "x": 37,
+        "y": 34,
+        "z": 38
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 124,
+        "y": 13,
+        "z": 62
+      },
+      "size": {
+        "x": 31,
+        "y": 26,
+        "z": 36
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 124,
+        "y": 9,
+        "z": 124
+      },
+      "size": {
+        "x": 34,
+        "y": 18,
+        "z": 34
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -155,
+        "y": 5,
+        "z": -20
+      },
+      "size": {
+        "x": 40,
+        "y": 10,
+        "z": 70
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 155,
+        "y": 5,
+        "z": 20
+      },
+      "size": {
+        "x": 40,
+        "y": 10,
+        "z": 70
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -20,
+        "y": 6,
+        "z": -155
+      },
+      "size": {
+        "x": 70,
+        "y": 12,
+        "z": 40
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 20,
+        "y": 6,
+        "z": 155
+      },
+      "size": {
+        "x": 70,
+        "y": 12,
+        "z": 40
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -8,
+        "y": 7,
+        "z": 0
+      },
+      "size": {
+        "x": 4,
+        "y": 14,
+        "z": 120
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 8,
+        "y": 7,
+        "z": 0
+      },
+      "size": {
+        "x": 4,
+        "y": 14,
+        "z": 120
+      },
+      "tag": "building"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 0,
+        "y": 15,
+        "z": 0
+      },
+      "size": {
+        "x": 20,
+        "y": 2,
+        "z": 120
+      },
+      "tag": "bridge"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": -31,
+        "y": 50,
+        "z": -62
+      },
+      "size": {
+        "x": 32,
+        "y": 2,
+        "z": 6
+      },
+      "tag": "bridge"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 31,
+        "y": 50,
+        "z": 62
+      },
+      "size": {
+        "x": 32,
+        "y": 2,
+        "z": 6
+      },
+      "tag": "bridge"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 0,
+        "y": 64,
+        "z": -31
+      },
+      "size": {
+        "x": 6,
+        "y": 2,
+        "z": 32
+      },
+      "tag": "bridge"
+    },
+    {
+      "shape": "box",
+      "pos": {
+        "x": 0,
+        "y": 64,
+        "z": 31
+      },
+      "size": {
+        "x": 6,
+        "y": 2,
+        "z": 32
+      },
+      "tag": "bridge"
+    },
+    {
+      "shape": "cylinder",
+      "pos": {
+        "x": -90,
+        "y": 104,
+        "z": 90
+      },
+      "radius": 11,
+      "height": 6,
+      "tag": "floater"
+    },
+    {
+      "shape": "cylinder",
+      "pos": {
+        "x": 95,
+        "y": 112,
+        "z": -85
+      },
+      "radius": 9,
+      "height": 5,
+      "tag": "floater"
+    },
+    {
+      "shape": "cylinder",
+      "pos": {
+        "x": 0,
+        "y": 124,
+        "z": 0
+      },
+      "radius": 13,
+      "height": 6,
+      "tag": "floater"
+    },
+    {
+      "shape": "cylinder",
+      "pos": {
+        "x": -120,
+        "y": 98,
+        "z": -110
+      },
+      "radius": 8,
+      "height": 5,
+      "tag": "floater"
+    },
+    {
+      "shape": "cylinder",
+      "pos": {
+        "x": 130,
+        "y": 130,
+        "z": 120
+      },
+      "radius": 10,
+      "height": 6,
+      "tag": "floater"
+    },
+    {
+      "shape": "cylinder",
+      "pos": {
+        "x": 60,
+        "y": 96,
+        "z": -150
+      },
+      "radius": 7,
+      "height": 4,
+      "tag": "floater"
+    }
+  ]
+}

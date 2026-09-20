@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sky Tag — 空中鬼ごっこ</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0d1117; }
+      body {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: #e6edf3;
+      }
+      #view { display: block; width: 100%; height: 100%; }
+
+      #hud {
+        position: fixed;
+        inset: auto auto 16px 16px;
+        padding: 10px 14px;
+        background: rgba(13, 17, 23, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+        font-size: 13px;
+        line-height: 1.6;
+        white-space: pre;
+        pointer-events: none;
+      }
+      #crosshair {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        width: 18px;
+        height: 18px;
+        margin: -9px 0 0 -9px;
+        pointer-events: none;
+        opacity: 0.8;
+      }
+      #crosshair::before, #crosshair::after {
+        content: '';
+        position: absolute;
+        background: #e6edf3;
+      }
+      #crosshair::before { left: 8px; top: 0; width: 2px; height: 18px; }
+      #crosshair::after { top: 8px; left: 0; height: 2px; width: 18px; }
+
+      #overlay {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: rgba(13, 17, 23, 0.82);
+        text-align: center;
+        cursor: pointer;
+      }
+      #overlay.hidden { display: none; }
+      #overlay h1 { margin: 0 0 8px; font-size: 30px; letter-spacing: 0.06em; }
+      #overlay p { margin: 4px 0; color: #9fb0c0; font-size: 14px; }
+      #overlay kbd {
+        background: #21262d;
+        border: 1px solid #39414d;
+        border-radius: 4px;
+        padding: 1px 6px;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="crosshair"></div>
+    <div id="hud"></div>
+    <div id="overlay">
+      <div>
+        <h1>SKY TAG</h1>
+        <p>クリックで開始（マウスカーソルがロックされます）</p>
+        <p>
+          <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移動 ・
+          <kbd>Space</kbd> 上昇 ・ <kbd>Ctrl</kbd> 下降 ・
+          <kbd>Shift</kbd> ブースト ・ マウス 視点 ・ <kbd>Esc</kbd> 解除
+        </p>
+        <p>Phase 1: 飛行とカメラのみ（射撃とルールは Phase 2）</p>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
