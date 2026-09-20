@@ -16,7 +16,7 @@ import {
   type SimEvent,
   type Vec3,
 } from '../src/sim/types.ts';
-import { indicatorContacts } from '../src/render/hud.ts';
+import { radarBlips } from '../src/render/hud.ts';
 import { World } from '../src/sim/world.ts';
 
 const map = loadMap('city01');
@@ -330,45 +330,94 @@ describe('decoys against AI perception', () => {
   });
 });
 
-describe('decoys against the human HUD', () => {
-  const self = () => createEntity(0, 'hunter', { x: 0, y: 100, z: 0 }, CONFIG);
+describe('decoys on the radar', () => {
+  /** Facing -Z at the origin, high in open air. */
+  const self = () => createEntity(0, 'hunter', { x: 0, y: 100, z: 0 }, CONFIG, { aimYaw: 0 });
+  /** 80 m straight ahead. */
   const runner = () => createEntity(1, 'runner', { x: 0, y: 100, z: -80 }, CONFIG);
-  const phantom = (x: number, ownerId = 1): DecoyState => ({
-    id: 1, ownerId, team: 'runner', pos: { x, y: 100, z: -80 }, vel: { x: 0, y: 0, z: 0 }, life: 5,
+  const phantom = (pos: Vec3, ownerId = 1): DecoyState => ({
+    id: 1, ownerId, team: 'runner', pos, vel: { x: 0, y: 0, z: 0 }, life: 5,
   });
-  const clear = () => false;
+  const clear = (): boolean => false;
+  const hud = (overrides: Partial<typeof CONFIG.hud> = {}) => ({ ...CONFIG.hud, ...overrides });
 
-  it('points at a decoy as well as the craft, with nothing to tell them apart', () => {
-    // A single indicator locked to the real craft would let a human simply
-    // read the HUD and ignore the phantom.
-    const contacts = indicatorContacts(self(), runner(), [phantom(40)], 'always', clear);
-    expect(contacts).toHaveLength(2);
-    expect(contacts.map((c) => c.x).sort()).toEqual([0, 40]);
+  it('paints a decoy as an extra contact, with nothing to tell them apart', () => {
+    // A display that singled out the real craft would let a human read the
+    // radar and ignore the phantom.
+    const blips = radarBlips(
+      self(), runner(), [phantom({ x: 60, y: 100, z: -40 })], hud({ enemyIndicator: 'always' }), clear,
+    );
+    expect(blips).toHaveLength(2);
+    // Nothing on a blip says which is the real one.
+    for (const blip of blips) {
+      expect(Object.keys(blip).sort()).toEqual(['altitude', 'distance', 'x', 'y']);
+    }
+  });
+
+  it('places a contact straight ahead at the top of the radar', () => {
+    const [blip] = radarBlips(self(), runner(), [], hud({ enemyIndicator: 'always' }), clear);
+    expect(blip!.x).toBeCloseTo(0, 6);
+    expect(blip!.y).toBeCloseTo(80 / CONFIG.hud.radarRange, 6);
+    expect(blip!.distance).toBeCloseTo(80, 6);
+  });
+
+  it('rotates contacts into the viewer heading, so up is forward', () => {
+    const turned = self();
+    // Yaw PI faces +Z, so the contact at -Z is now behind.
+    turned.aimYaw = Math.PI;
+    const [behind] = radarBlips(turned, runner(), [], hud({ enemyIndicator: 'always' }), clear);
+    expect(behind!.y).toBeCloseTo(-80 / CONFIG.hud.radarRange, 5);
+
+    // A quarter turn puts it out to one side instead.
+    turned.aimYaw = Math.PI / 2;
+    const [beside] = radarBlips(turned, runner(), [], hud({ enemyIndicator: 'always' }), clear);
+    expect(Math.abs(beside!.x)).toBeCloseTo(80 / CONFIG.hud.radarRange, 5);
+    expect(beside!.y).toBeCloseTo(0, 5);
+  });
+
+  it('marks contacts above and below, and leaves near-level ones alone', () => {
+    const band = CONFIG.hud.radarAltitudeBand;
+    const at = (dy: number): Vec3 => ({ x: 0, y: 100 + dy, z: -60 });
+    const altitudeOf = (dy: number): string =>
+      radarBlips(self(), undefined, [phantom(at(dy))], hud({ enemyIndicator: 'always' }), clear)[0]!.altitude;
+
+    expect(altitudeOf(band + 10)).toBe('above');
+    expect(altitudeOf(-(band + 10))).toBe('below');
+    expect(altitudeOf(band - 5)).toBe('level');
+  });
+
+  it('leaves out anything past the radar range', () => {
+    const far = createEntity(1, 'runner', { x: 0, y: 100, z: -(CONFIG.hud.radarRange + 50) }, CONFIG);
+    expect(radarBlips(self(), far, [], hud({ enemyIndicator: 'always' }), clear)).toEqual([]);
   });
 
   it('hides a contact the policy says is out of sight', () => {
-    const blockDecoy = (_from: Vec3, to: Vec3): boolean => to.x === 40;
-    const contacts = indicatorContacts(self(), runner(), [phantom(40)], 'lineOfSight', blockDecoy);
-    expect(contacts).toHaveLength(1);
-    expect(contacts[0]!.x).toBe(0);
+    const blockDecoy = (_from: Vec3, to: Vec3): boolean => to.x === 60;
+    const blips = radarBlips(
+      self(), runner(), [phantom({ x: 60, y: 100, z: -40 })], hud({ enemyIndicator: 'lineOfSight' }), blockDecoy,
+    );
+    expect(blips).toHaveLength(1);
+    expect(blips[0]!.x).toBeCloseTo(0, 6);
   });
 
-  it('never points at your own decoy', () => {
+  it('never paints your own decoy', () => {
     const me = self();
-    const contacts = indicatorContacts(me, runner(), [phantom(40, me.id)], 'always', clear);
-    expect(contacts).toHaveLength(1);
+    const blips = radarBlips(
+      me, runner(), [phantom({ x: 60, y: 100, z: -40 }, me.id)], hud({ enemyIndicator: 'always' }), clear,
+    );
+    expect(blips).toHaveLength(1);
   });
 
-  it('shows nothing under the never policy, or when down', () => {
-    expect(indicatorContacts(self(), runner(), [phantom(40)], 'never', clear)).toEqual([]);
+  it('paints nothing under the never policy, or when down', () => {
+    expect(radarBlips(self(), runner(), [], hud({ enemyIndicator: 'never' }), clear)).toEqual([]);
 
     const dead = self();
     dead.alive = false;
-    expect(indicatorContacts(dead, runner(), [phantom(40)], 'always', clear)).toEqual([]);
+    expect(radarBlips(dead, runner(), [], hud({ enemyIndicator: 'always' }), clear)).toEqual([]);
 
-    const downedRunner = runner();
-    downedRunner.alive = false;
-    expect(indicatorContacts(self(), downedRunner, [], 'always', clear)).toEqual([]);
+    const downed = runner();
+    downed.alive = false;
+    expect(radarBlips(self(), downed, [], hud({ enemyIndicator: 'always' }), clear)).toEqual([]);
   });
 });
 

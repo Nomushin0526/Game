@@ -281,7 +281,6 @@ function drawPlayers(
       enemy: world.entities.find((e) => e.id !== self.id),
       decoys: world.decoys,
       match: world.match,
-      camera: player.camera.camera,
       message: bannerFor(world, self.id),
       submessage:
         world.match.phase === 'roundOver' || world.match.phase === 'matchOver'

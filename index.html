@@ -128,17 +128,51 @@
       .hud-crosshair::before { left: 7px; top: 0; width: 2px; height: 16px; }
       .hud-crosshair::after { top: 7px; left: 0; height: 2px; width: 16px; }
 
-      .hud-arrows { position: absolute; inset: 0; pointer-events: none; }
-      .hud-arrow {
+      /* ---------- Radar ---------- */
+      .hud-radar {
         position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 116px;
+        height: 116px;
+        border-radius: 50%;
+        background: rgba(8, 14, 20, 0.55);
+        border: 1px solid rgba(127, 212, 255, 0.35);
+        overflow: hidden;
+      }
+      /* Half-range ring, so distance can be read at a glance. */
+      .hud-radar-ring {
+        position: absolute;
+        inset: 25%;
+        border: 1px solid rgba(127, 212, 255, 0.18);
+        border-radius: 50%;
+      }
+      /* The viewer: a chevron at the centre, always pointing up the screen,
+         because the radar is rotated into their heading. */
+      .hud-radar-self {
+        position: absolute;
+        left: 50%;
+        top: 50%;
         width: 0;
         height: 0;
-        border-left: 9px solid transparent;
-        border-right: 9px solid transparent;
-        border-bottom: 15px solid #ffd166;
-        opacity: 0.55;
+        margin: -5px 0 0 -4px;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-bottom: 9px solid rgba(190, 225, 255, 0.85);
       }
-      .hud-arrow.offscreen { opacity: 1; border-bottom-color: #ff7b6b; }
+      .hud-blip {
+        position: absolute;
+        width: 8px;
+        height: 8px;
+        margin: -4px 0 0 -4px;
+        border-radius: 50%;
+        background: #ff5a4a;
+        box-shadow: 0 0 5px rgba(255, 90, 74, 0.8);
+      }
+      .hud-blip.close { background: #ff8a5a; box-shadow: 0 0 9px rgba(255, 138, 90, 0.95); }
+      /* A ring above or below the dot reads as altitude without extra labels. */
+      .hud-blip.above { border-top: 3px solid #ffd166; margin-top: -7px; }
+      .hud-blip.below { border-bottom: 3px solid #7fd4ff; margin-top: -1px; }
 
       .hud-banner, .hud-subbanner {
         position: absolute;

@@ -5,15 +5,12 @@
  * pane; it positions itself over its own viewport.
  */
 
-import * as THREE from 'three';
 import type { HudConfig, ItemKind, SkyTagConfig } from '../sim/config.ts';
+import { dot, forwardVector, rightVector, sub } from '../sim/math.ts';
 import type { PhysicsWorld } from '../sim/physics.ts';
 import { describeResult, type MatchState } from '../sim/rules.ts';
 import type { DecoyState, EntityState, ItemSlotState, Vec3 } from '../sim/types.ts';
 import { TEAM_COLORS } from './scene.ts';
-
-/** Fraction of the half-extent at which the off-screen arrow sits. */
-const ARROW_INSET = 0.86;
 
 export interface HudViewport {
   /** CSS pixels from the left of the canvas. */
@@ -30,7 +27,6 @@ export interface HudFrame {
   /** Phantoms in the air. They get an indicator of their own; see `updateEnemy`. */
   decoys: readonly DecoyState[];
   match: MatchState;
-  camera: THREE.Camera;
   /** Banner across the middle of this pane, or null. */
   message: string | null;
   submessage?: string | null;
@@ -47,20 +43,13 @@ export class Hud {
   private readonly enemyHp: Bar;
   private readonly boost: Bar;
   private readonly heat: Bar;
-  /**
-   * One indicator per contact, real or fake.
-   *
-   * A single arrow locked to the real craft would make the decoy useless
-   * against a human: they would simply read the HUD and ignore the phantom.
-   * The CPU cannot tell them apart, so neither can the HUD.
-   */
-  private readonly arrows: HTMLDivElement[] = [];
-  private readonly arrowLayer: HTMLDivElement;
+  private readonly radar: HTMLDivElement;
+  /** One dot per painted contact, real or fake; pooled across frames. */
+  private readonly blips: HTMLDivElement[] = [];
   private readonly enemyLabel: HTMLDivElement;
   private readonly items: HTMLDivElement;
   private readonly itemSlots: ItemSlotView[] = [];
   private readonly blindOverlay: HTMLDivElement;
-  private readonly projected = new THREE.Vector3();
 
   constructor(
     container: HTMLElement,
@@ -92,12 +81,13 @@ export class Hud {
 
     this.banner = el('div', 'hud-banner');
     this.subBanner = el('div', 'hud-subbanner');
-    this.arrowLayer = el('div', 'hud-arrows');
+    this.radar = el('div', 'hud-radar');
+    this.radar.append(el('div', 'hud-radar-ring'), el('div', 'hud-radar-self'));
     this.blindOverlay = el('div', 'hud-blind');
 
     const crosshair = el('div', 'hud-crosshair');
     this.root.append(
-      top, enemyBlock, bottom, this.arrowLayer, crosshair,
+      top, enemyBlock, bottom, this.radar, crosshair,
       this.blindOverlay, this.banner, this.subBanner,
     );
     container.append(this.root);
@@ -134,7 +124,7 @@ export class Hud {
     const blinded = self.blindTimer > 0;
     this.blindOverlay.style.opacity = blinded ? String(Math.min(1, self.blindTimer / 0.8)) : '0';
 
-    this.updateEnemy(self, enemy, frame.decoys, frame.camera);
+    this.updateEnemy(self, enemy, frame.decoys);
 
     this.banner.textContent = frame.message ?? '';
     this.banner.classList.toggle('visible', Boolean(frame.message));
@@ -146,7 +136,6 @@ export class Hud {
     self: EntityState,
     enemy: EntityState | undefined,
     decoys: readonly DecoyState[],
-    camera: THREE.Camera,
   ): void {
     if (!enemy || !this.config.hud.showEnemyHp) {
       this.enemyLabel.textContent = '';
@@ -157,45 +146,27 @@ export class Hud {
       this.enemyHp.set(enemy.hp / this.config.loadout[enemy.team].maxHp, `${Math.ceil(enemy.hp)}`);
     }
 
-    const contacts = indicatorContacts(self, enemy, decoys, this.config.hud.enemyIndicator, (from, to) =>
+    const painted = radarBlips(self, enemy, decoys, this.config.hud, (from, to) =>
       this.physics.isBlocked(from, to),
     );
 
-    while (this.arrows.length < contacts.length) {
-      const arrow = el('div', 'hud-arrow');
-      this.arrows.push(arrow);
-      this.arrowLayer.append(arrow);
+    while (this.blips.length < painted.length) {
+      const blip = el('div', 'hud-blip');
+      this.blips.push(blip);
+      this.radar.append(blip);
     }
-    this.arrows.forEach((arrow, index) => {
-      const contact = contacts[index];
-      arrow.style.display = contact ? 'block' : 'none';
-      if (contact) this.placeArrow(arrow, contact, camera);
+    this.blips.forEach((blip, index) => {
+      const contact = painted[index];
+      blip.style.display = contact ? 'block' : 'none';
+      if (!contact) return;
+
+      // Radar space is +y forward; the screen is +y down.
+      blip.style.left = `${(contact.x + 1) * 50}%`;
+      blip.style.top = `${(1 - contact.y) * 50}%`;
+      blip.className = `hud-blip ${contact.altitude}`;
+      // Nearer contacts read hotter, so a closing threat is felt, not counted.
+      blip.classList.toggle('close', contact.distance < this.config.hud.radarRange * 0.35);
     });
-  }
-
-  /**
-   * Put the arrow on the enemy when they are on screen, or pin it to the edge
-   * of the pane pointing at them when they are not.
-   */
-  private placeArrow(arrow: HTMLDivElement, at: Vec3, camera: THREE.Camera): void {
-    this.projected.set(at.x, at.y, at.z).project(camera);
-    let { x, y } = this.projected;
-    // `project` mirrors points that are behind the camera; flip them back so the
-    // arrow points the way the player actually has to turn.
-    const behind = this.projected.z > 1;
-    if (behind) { x = -x; y = -y; }
-
-    const offScreen = behind || Math.abs(x) > 1 || Math.abs(y) > 1;
-    if (offScreen) {
-      const scale = ARROW_INSET / Math.max(Math.abs(x), Math.abs(y), 1e-6);
-      x *= scale;
-      y *= scale;
-    }
-
-    arrow.classList.toggle('offscreen', offScreen);
-    arrow.style.left = `${((x + 1) / 2) * 100}%`;
-    arrow.style.top = `${((1 - y) / 2) * 100}%`;
-    arrow.style.transform = `translate(-50%, -50%) rotate(${Math.atan2(-y, x) + Math.PI / 2}rad)`;
   }
 
   /** Rebuilds the chips only when the loadout changes, e.g. on a side swap. */
@@ -231,26 +202,44 @@ export class Hud {
   }
 }
 
+/** Where a contact sits relative to you, in altitude terms. */
+export type BlipAltitude = 'above' | 'level' | 'below';
+
+/** One painted contact, in radar space. */
+export interface RadarBlip {
+  /** -1 (hard left) to 1 (hard right). */
+  x: number;
+  /** -1 (behind) to 1 (ahead). */
+  y: number;
+  altitude: BlipAltitude;
+  /** Distance in metres, for styling near contacts more urgently. */
+  distance: number;
+}
+
 /**
- * Every position the HUD should point at, real craft and decoys alike.
+ * Everything the radar paints, real craft and decoys alike.
  *
- * Exported and pure so the rule can be tested without a DOM. A single
- * indicator locked to the real craft would make the decoy worthless against a
- * human — they would read the HUD and ignore the phantom — so contacts are
- * collected the same way `Perception` collects them for the CPU, and nothing
- * in the output says which is which.
+ * Exported and pure so the rule can be tested without a DOM. Nothing in the
+ * output says which blip is which: a display that singled out the real craft
+ * would make the decoy worthless against a human, who would simply read the
+ * radar and ignore the phantom. So contacts are collected the same way
+ * `Perception` collects them for the CPU, and a decoy just adds a blip.
+ *
+ * Radar space is rotated into the viewer's heading — up is where they are
+ * facing — and scaled by `range`, with anything beyond it left off entirely.
  */
-export function indicatorContacts(
+export function radarBlips(
   self: EntityState,
   enemy: EntityState | undefined,
   decoys: readonly DecoyState[],
-  policy: HudConfig['enemyIndicator'],
+  config: HudConfig,
   isBlocked: (from: Vec3, to: Vec3) => boolean,
-): Vec3[] {
-  if (policy === 'never' || !self.alive) return [];
+): RadarBlip[] {
+  if (config.enemyIndicator === 'never' || !self.alive) return [];
 
-  const visible = (at: Vec3): boolean => policy === 'always' || !isBlocked(self.pos, at);
   const contacts: Vec3[] = [];
+  const visible = (at: Vec3): boolean =>
+    config.enemyIndicator === 'always' || !isBlocked(self.pos, at);
 
   if (enemy && enemy.alive && visible(enemy.pos)) contacts.push(enemy.pos);
   for (const decoy of decoys) {
@@ -258,7 +247,28 @@ export function indicatorContacts(
     if (decoy.ownerId === self.id) continue;
     if (visible(decoy.pos)) contacts.push(decoy.pos);
   }
-  return contacts;
+
+  const forward = forwardVector(self.aimYaw, 0);
+  const right = rightVector(self.aimYaw);
+  const blips: RadarBlip[] = [];
+
+  for (const at of contacts) {
+    const offset = sub(at, self.pos);
+    const distance = Math.hypot(offset.x, offset.y, offset.z);
+    if (distance > config.radarRange) continue;
+
+    const height = offset.y;
+    blips.push({
+      x: dot(offset, right) / config.radarRange,
+      y: dot(offset, forward) / config.radarRange,
+      altitude:
+        height > config.radarAltitudeBand ? 'above'
+        : height < -config.radarAltitudeBand ? 'below'
+        : 'level',
+      distance,
+    });
+  }
+  return blips;
 }
 
 /** One item slot chip: key hint, name, charges, and a cooldown wipe. */

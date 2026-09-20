@@ -39,7 +39,7 @@ export function showMenu(root: HTMLElement, defaults: MenuDefaults): Promise<Mat
         'p',
         'subtitle',
         '空中鬼ごっこ — 鬼は速く重い。逃亡者は時間まで逃げ切れば勝ち。' +
-          '逃亡者はデコイ・シールド・フラッシュを持つ。',
+          '逃亡者はデコイ・シールド・フラッシュを持つ。デコイはレーダー上でも本物と区別がつかない。',
       ),
     );
 

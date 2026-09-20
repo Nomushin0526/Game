@@ -253,12 +253,22 @@ export interface AiConfig {
 
 export interface HudConfig {
   /**
-   * How much the HUD tells you about the enemy (DESIGN.md section 10).
-   * - `lineOfSight` only points at them while you can actually see them
-   * - `always` is the arcade-style permanent arrow
+   * How much the radar tells you about the enemy (DESIGN.md section 10).
+   * - `lineOfSight` paints a contact only while you can actually see it
+   * - `always` is the arcade-style permanent contact
    * - `never` leaves you to find them by eye
    */
   enemyIndicator: 'lineOfSight' | 'always' | 'never';
+  /**
+   * Radar range in metres. Contacts beyond it are simply not painted, so the
+   * radar has a real edge rather than pinning distant contacts to its rim.
+   */
+  radarRange: number;
+  /**
+   * Height difference at which a contact is marked as above or below, metres.
+   * Below this it reads as level, which keeps the common case uncluttered.
+   */
+  radarAltitudeBand: number;
   /** Show the enemy's HP bar, not just your own. */
   showEnemyHp: boolean;
 }
@@ -404,6 +414,9 @@ export const CONFIG: SkyTagConfig = {
     // Hiding has to mean something in a game of tag, so the default is the
     // non-cheating one: no arrow through walls, for either side.
     enemyIndicator: 'lineOfSight',
+    // Comfortably past weapon range, so a contact shows up before it can shoot.
+    radarRange: 200,
+    radarAltitudeBand: 20,
     showEnemyHp: true,
   },
   input: {
