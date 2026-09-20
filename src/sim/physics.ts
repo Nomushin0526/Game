@@ -9,6 +9,7 @@
  */
 
 import RAPIER from '@dimforge/rapier3d-compat';
+import type { Terrain } from '../maps/terrain.ts';
 import type { MapData } from '../maps/types.ts';
 import type { Vec3 } from './types.ts';
 
@@ -39,6 +40,13 @@ export class PhysicsWorld {
   /** Re-used so a sphere cast does not allocate a new Rapier shape per tick. */
   private readonly probeCache = new Map<number, RAPIER.Ball>();
   private readonly identityRot = { x: 0, y: 0, z: 0, w: 1 };
+  /**
+   * Kept because a Rapier height field is a surface, not a sealed volume:
+   * queries under it hit nothing at all, so "underground" has to be answered
+   * by sampling the terrain rather than by asking the collider.
+   */
+  private readonly terrain: Terrain | undefined;
+  private readonly floor: number;
 
   constructor(map: MapData) {
     if (!initialised) {
@@ -46,8 +54,11 @@ export class PhysicsWorld {
     }
     // Gravity is zero: these are thrusters, not falling bodies.
     this.world = new RAPIER.World({ x: 0, y: 0, z: 0 });
+    this.terrain = map.terrain;
+    this.floor = map.floor;
 
     this.addGround(map);
+    if (map.terrain) this.addTerrain(map);
     for (const solid of map.solids) {
       if (solid.shape === 'box') {
         const rotY = solid.rotY ?? 0;
@@ -75,7 +86,10 @@ export class PhysicsWorld {
     this.world.updateSceneQueries();
   }
 
-  /** A thick slab rather than a plane, so a fast craft cannot tunnel through it. */
+  /**
+   * A thick slab rather than a plane, so a fast craft cannot tunnel through it.
+   * It sits entirely below `floor`, so relief always rises above it.
+   */
   private addGround(map: MapData): void {
     const thickness = 10;
     const body = this.world.createRigidBody(
@@ -83,6 +97,30 @@ export class PhysicsWorld {
     );
     this.world.createCollider(
       RAPIER.ColliderDesc.cuboid(map.size.x, thickness / 2, map.size.z),
+      body,
+    );
+  }
+
+  /**
+   * Ground relief as a Rapier heightfield.
+   *
+   * Rapier stores heights column-major and scales them by `scale.y`, and its
+   * grid is centred on the collider. `Terrain` uses that same layout, so the
+   * buffer goes across untouched and physics agrees with `terrain.heightAt()`
+   * and with the rendered mesh by construction.
+   */
+  private addTerrain(map: MapData): void {
+    const terrain = map.terrain!;
+    const cells = terrain.resolution;
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(0, map.floor, 0),
+    );
+    this.world.createCollider(
+      RAPIER.ColliderDesc.heightfield(cells, cells, terrain.heights, {
+        x: map.size.x,
+        y: terrain.maxHeight,
+        z: map.size.z,
+      }),
       body,
     );
   }
@@ -138,8 +176,25 @@ export class PhysicsWorld {
     };
   }
 
-  /** True when geometry blocks the straight line between two points. */
+  /** Ground height at a world point, including relief. */
+  groundHeight(x: number, z: number): number {
+    return this.floor + (this.terrain?.heightAt(x, z) ?? 0);
+  }
+
+  /** True when a point sits at or below the ground surface. */
+  isUnderground(p: Vec3, clearance = 0): boolean {
+    return p.y < this.groundHeight(p.x, p.z) + clearance;
+  }
+
+  /**
+   * True when geometry blocks the straight line between two points.
+   *
+   * An endpoint below the ground counts as blocked: a height field has no
+   * underside, so a sightline running under a hill would otherwise come back
+   * clear.
+   */
   isBlocked(from: Vec3, to: Vec3): boolean {
+    if (this.isUnderground(from) || this.isUnderground(to)) return true;
     const dx = to.x - from.x;
     const dy = to.y - from.y;
     const dz = to.z - from.z;
@@ -149,8 +204,9 @@ export class PhysicsWorld {
     return this.raycast(from, dir, dist) !== null;
   }
 
-  /** True when a sphere at `pos` does not overlap any static geometry. */
+  /** True when a sphere at `pos` sits in open air, above ground and clear of solids. */
   isClear(pos: Vec3, radius: number): boolean {
+    if (this.isUnderground(pos, radius)) return false;
     return (
       this.world.intersectionWithShape(pos, this.identityRot, this.probe(radius)) === null
     );

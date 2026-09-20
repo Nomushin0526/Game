@@ -7,7 +7,8 @@
  */
 
 import city01 from '../../maps/city01.json';
-import type { MapData, Solid } from './types.ts';
+import { Terrain, type TerrainDef } from './terrain.ts';
+import { tunnelSolids, type MapData, type Solid, type TunnelDef } from './types.ts';
 
 const BUILTIN_MAPS: Record<string, unknown> = {
   city01,
@@ -25,7 +26,12 @@ export function loadMap(id: string): MapData {
   return parseMap(raw);
 }
 
-/** Validate an arbitrary object into a `MapData`. Throws on anything malformed. */
+/**
+ * Validate an arbitrary object into a `MapData`. Throws on anything malformed.
+ *
+ * Two things are resolved here so that nothing downstream has to: terrain
+ * definitions become a sampled `Terrain`, and tunnels become plain solids.
+ */
 export function parseMap(raw: unknown): MapData {
   if (typeof raw !== 'object' || raw === null) throw new Error('Map must be an object');
   const m = raw as Record<string, unknown>;
@@ -45,7 +51,70 @@ export function parseMap(raw: unknown): MapData {
 
   const solids = Array.isArray(m.solids) ? m.solids.map((s, i) => parseSolid(s, `${id}.solids[${i}]`)) : [];
 
-  return { id, name, size: { x: size.x, z: size.z }, ceiling, floor, spawns, solids };
+  const terrain = m.terrain === undefined
+    ? undefined
+    : Terrain.fromDef(parseTerrain(m.terrain, id), size.x, size.z);
+  if (terrain && terrain.maxHeight > ceiling - floor) {
+    throw new Error(`Map "${id}": terrain maxHeight rises above the ceiling`);
+  }
+
+  if (Array.isArray(m.tunnels)) {
+    m.tunnels.forEach((t, i) => solids.push(...tunnelSolids(parseTunnel(t, `${id}.tunnels[${i}]`))));
+  }
+
+  return { id, name, size: { x: size.x, z: size.z }, ceiling, floor, terrain, spawns, solids };
+}
+
+function parseTerrain(raw: unknown, id: string): TerrainDef {
+  if (typeof raw !== 'object' || raw === null) throw new Error(`Map "${id}": terrain must be an object`);
+  const t = raw as Record<string, unknown>;
+
+  const resolution = t.resolution;
+  if (typeof resolution !== 'number' || !Number.isInteger(resolution) || resolution < 1) {
+    throw new Error(`Map "${id}": terrain.resolution must be a positive integer`);
+  }
+  const maxHeight = t.maxHeight;
+  if (typeof maxHeight !== 'number' || maxHeight < 0) {
+    throw new Error(`Map "${id}": terrain.maxHeight must be a non-negative number`);
+  }
+
+  const def: TerrainDef = { resolution, maxHeight };
+  if (typeof t.seed === 'number') def.seed = t.seed;
+  if (typeof t.featureSize === 'number') def.featureSize = t.featureSize;
+  if (typeof t.octaves === 'number') def.octaves = t.octaves;
+
+  if (t.heights !== undefined) {
+    const expected = (resolution + 1) ** 2;
+    if (!Array.isArray(t.heights) || t.heights.length !== expected) {
+      throw new Error(`Map "${id}": terrain.heights must hold exactly ${expected} values`);
+    }
+    if (t.heights.some((h) => typeof h !== 'number' || h < 0 || h > 1)) {
+      throw new Error(`Map "${id}": terrain.heights must all be numbers in 0..1`);
+    }
+    def.heights = t.heights as number[];
+  }
+  return def;
+}
+
+function parseTunnel(raw: unknown, where: string): TunnelDef {
+  if (typeof raw !== 'object' || raw === null) throw new Error(`${where}: must be an object`);
+  const t = raw as Record<string, unknown>;
+  const pos = requireVec3(t.pos, `${where}.pos`);
+
+  for (const key of ['length', 'width', 'height'] as const) {
+    if (typeof t[key] !== 'number' || (t[key] as number) <= 0) {
+      throw new Error(`${where}: ${key} must be a positive number`);
+    }
+  }
+  return {
+    pos,
+    length: t.length as number,
+    width: t.width as number,
+    height: t.height as number,
+    thickness: typeof t.thickness === 'number' ? t.thickness : undefined,
+    rotY: typeof t.rotY === 'number' ? t.rotY : 0,
+    floor: t.floor === true,
+  };
 }
 
 function parseSolid(raw: unknown, where: string): Solid {

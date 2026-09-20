@@ -15,6 +15,9 @@ const SOLID_COLORS: Record<SolidTag, number> = {
   bridge: 0x6b7280,
   floater: 0x8fa3bf,
   terrain: 0x3d4a3a,
+  tunnel: 0x4a5261,
+  tree: 0x3f6b43,
+  crane: 0xb8863f,
   prop: 0x39404d,
 };
 
@@ -54,18 +57,56 @@ export class SceneRenderer {
   }
 
   private addGround(map: MapData): void {
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(map.size.x, map.size.z),
-      new THREE.MeshLambertMaterial({ color: SOLID_COLORS.ground }),
-    );
-    ground.rotation.x = -Math.PI / 2;
+    const ground = map.terrain
+      ? this.makeTerrainMesh(map)
+      : new THREE.Mesh(
+          new THREE.PlaneGeometry(map.size.x, map.size.z),
+          new THREE.MeshLambertMaterial({ color: SOLID_COLORS.ground }),
+        );
+    if (!map.terrain) ground.rotation.x = -Math.PI / 2;
     ground.position.y = map.floor;
     this.scene.add(ground);
 
-    // A grid gives the eye a speed and altitude reference in open air.
+    // A grid gives the eye a speed and altitude reference in open air. With
+    // relief it would poke through the hills, so it sits just under the floor.
     const grid = new THREE.GridHelper(map.size.x, map.size.x / 20, 0x5b6b82, 0x3a4456);
-    grid.position.y = map.floor + 0.05;
+    grid.position.y = map.floor + (map.terrain ? -0.2 : 0.05);
     this.scene.add(grid);
+  }
+
+  /**
+   * Ground relief as a displaced plane.
+   *
+   * Vertices are pulled straight from the same `Terrain` the physics height
+   * field uses, so what you fly into is exactly what you see. Vertex colours
+   * shade valleys darker than ridges, which gives the eye something to read
+   * altitude against.
+   */
+  private makeTerrainMesh(map: MapData): THREE.Mesh {
+    const terrain = map.terrain!;
+    const cells = terrain.resolution;
+    const geometry = new THREE.PlaneGeometry(map.size.x, map.size.z, cells, cells);
+    geometry.rotateX(-Math.PI / 2);
+
+    const position = geometry.attributes.position as THREE.BufferAttribute;
+    const colors = new Float32Array(position.count * 3);
+    const low = new THREE.Color(0x2f3a33);
+    const high = new THREE.Color(0x5d7055);
+    const shade = new THREE.Color();
+
+    for (let i = 0; i < position.count; i++) {
+      const height = terrain.heightAt(position.getX(i), position.getZ(i));
+      position.setY(i, height);
+      shade.copy(low).lerp(high, terrain.maxHeight > 0 ? height / terrain.maxHeight : 0);
+      colors[i * 3] = shade.r;
+      colors[i * 3 + 1] = shade.g;
+      colors[i * 3 + 2] = shade.b;
+    }
+    position.needsUpdate = true;
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.computeVertexNormals();
+
+    return new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ vertexColors: true }));
   }
 
   private addSolids(map: MapData): void {
@@ -87,13 +128,17 @@ export class SceneRenderer {
       if (solid.shape === 'box' && solid.rotY) mesh.rotation.y = solid.rotY;
       this.scene.add(mesh);
 
-      const edges = new THREE.LineSegments(
-        new THREE.EdgesGeometry(mesh.geometry),
-        new THREE.LineBasicMaterial({ color: 0x1d2330 }),
-      );
-      edges.position.copy(mesh.position);
-      edges.rotation.copy(mesh.rotation);
-      this.scene.add(edges);
+      // Outlines help the eye separate overlapping slabs. Foliage reads better
+      // without them, and there is a lot of it.
+      if (tag !== 'tree') {
+        const edges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(mesh.geometry),
+          new THREE.LineBasicMaterial({ color: 0x1d2330 }),
+        );
+        edges.position.copy(mesh.position);
+        edges.rotation.copy(mesh.rotation);
+        this.scene.add(edges);
+      }
     }
   }
 

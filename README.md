@@ -8,7 +8,7 @@
 |---|---|---|
 | 1 | 飛行の土台（環境構築、飛行制御、衝突、追従カメラ、ヘッドレス実行） | ✅ 完了 |
 | 2 | 対戦ルール（光線銃、HP、タッチ判定、オーバーヒート、制限時間、ラウンド制、HUD、画面分割） | ✅ 完了 |
-| 3 | マップ | 一部（JSON読込・自動生成・3層マップは実装済み、地形の起伏とトンネル拡張は未実装） |
+| 3 | マップ（JSON読込、地形の起伏、トンネル、高架橋、木々、クレーン、浮遊物、自動生成） | ✅ 完了 |
 | 4 | CPU（段階A） | 未着手 |
 | 5〜7 | 学習AI、オンライン対戦、強化学習 | 未着手 |
 
@@ -41,6 +41,38 @@ URLパラメータ：`?seed=42`（乱数シード）、`?map=generated`（シー
 - 2ラウンド先取（Best of 3）。ラウンドごとに鬼と逃亡者が入れ替わるため、スコアは陣営ではなくプレイヤー枠ごとに記録される。
 - 時間切れの扱いは `config.rules.timeoutWinner`（`"runner"` / `"draw"`）で切り替え。
 - 数値はすべて `src/sim/config.ts` にある。この非対称バランスはまだ実戦検証していないので、フェーズ4の `simBatch` で鬼の勝率が45〜55%に入るか確認して調整するのが前提。主な調整つまみは `rules.timeLimit` と両陣営の `boostDrain` / `boostRegen`。
+
+## マップ
+
+マップは `maps/*.json`。`src/maps/loader.ts` が読み込み時に検証し、地形定義を高さフィールドに、トンネル定義をただの箱に展開する。物理と描画はどちらも同じ `Terrain` インスタンスを見るので、見た目と当たり判定が食い違うことはない。
+
+```jsonc
+{
+  "id": "city01",
+  "size": { "x": 400, "z": 400 },
+  "ceiling": 150,
+  "floor": 0,
+  // 地形の起伏。seed から生成するか、heights に 0..1 を (resolution+1)^2 個直接書く
+  "terrain": { "resolution": 32, "maxHeight": 20, "seed": 4021, "featureSize": 9, "octaves": 4 },
+  // 覆われた通路。読み込み時に壁2枚＋屋根の箱に展開される
+  "tunnels": [{ "pos": { "x": 0, "y": 8, "z": 0 }, "length": 150, "width": 18, "height": 13 }],
+  "spawns": [{ "x": -170, "y": 55, "z": -170 }],
+  "solids": [
+    { "shape": "box", "pos": {...}, "size": {...}, "rotY": 0, "tag": "building" },
+    { "shape": "cylinder", "pos": {...}, "radius": 3, "height": 5, "tag": "tree" }
+  ]
+}
+```
+
+`tag` は色分けと（フェーズ4以降の）AIの遮蔽物判定に使う：`building` / `bridge` / `tunnel` / `tree` / `crane` / `floater` / `prop` / `terrain` / `ground`。
+
+`city01` の配置は `tools/buildCity01.ts` が生成している。建物のY座標を地形の高さから計算しているので、斜面に浮いたり埋まったりしない。地形パラメータを変えたら再生成する：
+
+```bash
+npx tsx tools/buildCity01.ts > maps/city01.json
+```
+
+シードからの自動生成は `generateCityMap(seed)`。地形・低層ビル・木々・トンネル・高架橋・高層ビル・渡り廊下・クレーン・浮遊物を3層すべてに配置する。ブラウザでは `?map=generated&seed=123` で遊べる。
 
 ## コマンド
 
