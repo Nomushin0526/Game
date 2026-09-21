@@ -11,7 +11,7 @@ import { angleDelta, lookAngles } from '../../sim/math.ts';
 import { NO_ITEM } from '../../sim/types.ts';
 import { canShoot, findClutter, findCover, findEscape, jink, sampleArena, shotTarget } from '../tactics.ts';
 import { holdRange } from './hunterBrain.ts';
-import type { Action, Brain, BrainContext, Intent, ItemChoice } from '../types.ts';
+import { isDry, type Action, type Brain, type BrainContext, type Intent, type ItemChoice } from '../types.ts';
 
 /** Below this the hunter is close enough that only distance matters. */
 const PANIC_RANGE = 45;
@@ -126,7 +126,7 @@ const hide: Action = {
 const fight: Action = {
   name: 'fight',
   score(ctx) {
-    if (!ctx.perception.acquired || !ctx.enemy || ctx.self.ammo <= 0) return 0;
+    if (!ctx.perception.acquired || !ctx.enemy || isDry(ctx.self)) return 0;
     const enemyHealth = ctx.enemy.hp / ctx.config.loadout[ctx.enemy.team].maxHp;
     const ownHealth = ctx.self.hp / ctx.config.loadout[ctx.self.team].maxHp;
     // A knockout ends the round in the runner's favour immediately, so a nearly
@@ -154,7 +154,7 @@ const kite: Action = {
   score(ctx) {
     // Retreating while shooting is only worth choosing while there is
     // something to shoot; dry, this is `hide` with extra steps.
-    if (!ctx.perception.acquired || !ctx.enemy || ctx.self.ammo <= 0) return 0;
+    if (!ctx.perception.acquired || !ctx.enemy || isDry(ctx.self)) return 0;
     if (ctx.range < PANIC_RANGE) return 0;
     // Only worth it inside its own weapon range. Beyond that it would be
     // retreating without being able to shoot, which is just `hide` with the
@@ -210,7 +210,7 @@ function goToGround(ctx: BrainContext): Intent {
  * disappear. Spending the wrong one is worse than spending none.
  */
 function chooseItem(ctx: BrainContext): ItemChoice {
-  const ready = (kind: 'decoy' | 'shield' | 'flash'): number =>
+  const ready = (kind: 'decoy' | 'shield' | 'flash' | 'overcharge'): number =>
     ctx.self.items.findIndex((slot) => slot.kind === kind && slot.charges > 0 && slot.cooldown <= 0);
 
   const enemy = ctx.enemy;
@@ -236,6 +236,20 @@ function chooseItem(ctx: BrainContext): ItemChoice {
     ctx.range < ctx.config.loadout.hunter.range
   ) {
     return shield;
+  }
+
+  // Overcharge: the runner's knockout is its only win that does not need the
+  // clock, and a scarce magazine is what takes it away. Spent low on bolts,
+  // in range, with the hunter hurt enough for the burst to finish it.
+  const overcharge = ready('overcharge');
+  if (
+    overcharge >= 0 &&
+    ctx.self.overchargeTimer <= 0 &&
+    ctx.perception.acquired &&
+    ctx.self.ammo < ctx.config.loadout[ctx.self.team].ammo * 0.35 &&
+    ctx.range < ctx.config.loadout[ctx.self.team].range
+  ) {
+    return overcharge;
   }
 
   // Decoy: seen, but with enough room left that a phantom has somewhere to go.

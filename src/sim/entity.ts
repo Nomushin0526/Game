@@ -38,6 +38,7 @@ export function createEntity(
     revealTimer: 0,
     snareTimer: 0,
     overdriveTimer: 0,
+    overchargeTimer: 0,
     shotsFired: 0,
     shotsHit: 0,
     alive: true,

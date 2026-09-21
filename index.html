@@ -81,6 +81,8 @@
       .hud-bar-ammo .hud-bar-fill { background: linear-gradient(90deg, #cbd5e1, #94a3b8); }
       .hud-bar-ammo.dry .hud-bar-fill { background: #ef4444; }
       .hud-bar-ammo.dry .hud-bar-value { color: #ef4444; }
+      .hud-bar-ammo.free .hud-bar-fill { background: linear-gradient(90deg, #a78bfa, #7c3aed); }
+      .hud-bar-ammo.free .hud-bar-value { color: #c4b5fd; }
 
       .hud-items { display: flex; gap: 6px; margin-top: 3px; }
       .hud-item {
@@ -94,6 +96,10 @@
         border-radius: 5px;
         font-size: 10px;
         overflow: hidden;
+        /* Item names run to six characters ("オーバーチャージ"), and a chip that
+           wraps them is unreadable at a glance mid-fight. */
+        white-space: nowrap;
+        flex: none;
       }
       .hud-item-key { color: var(--muted); }
       .hud-item-charges { color: #7fd4ff; letter-spacing: 1px; }

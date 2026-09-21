@@ -21,6 +21,11 @@ export interface Intent {
   boost: boolean;
 }
 
+/** True when the gun has nothing to fire and no window that would let it. */
+export function isDry(self: EntityState): boolean {
+  return self.ammo <= 0 && self.overchargeTimer <= 0;
+}
+
 /** Item slot to spend, or `NO_ITEM`. Separate from `Intent` because items are
  *  chosen once per decision rather than re-decided every tick. */
 export type ItemChoice = number;

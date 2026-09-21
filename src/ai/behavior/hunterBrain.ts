@@ -9,7 +9,7 @@
 import { add, angleDelta, distance, lookAngles, normalize, scale, sub } from '../../sim/math.ts';
 import { NO_ITEM, type Vec3 } from '../../sim/types.ts';
 import { canShoot, findCover, sampleArena, searchPoint, shotTarget } from '../tactics.ts';
-import type { Action, Brain, BrainContext, Intent, ItemChoice } from '../types.ts';
+import { isDry, type Action, type Brain, type BrainContext, type Intent, type ItemChoice } from '../types.ts';
 
 /** Distance at which the hunter commits to a tag instead of shooting. */
 const TAG_COMMIT_RANGE = 26;
@@ -35,7 +35,7 @@ const pursue: Action = {
     const commit = ctx.range < TAG_COMMIT_RANGE ? 0.45 : 0;
     // Out of bolts, the tag is the only ending the hunter can still reach, so
     // it stops looking for a firing position and just chases.
-    const dry = ctx.self.ammo <= 0 ? 0.5 : 0;
+    const dry = isDry(ctx.self) ? 0.5 : 0;
     return 0.35 + closeness * 0.35 + commit + dry + ctx.perception.confidence(ctx.config) * 0.15;
   },
   act(ctx): Intent {
@@ -50,7 +50,7 @@ const pursue: Action = {
       fire: ctx.perception.acquired && canShoot(ctx, shootAt),
       // A dry hunter has to actually arrive, so it keeps the boost on right
       // up to contact rather than easing off at the usual stand-off distance.
-      boost: ctx.range > 18 || ctx.self.ammo <= 0,
+      boost: ctx.range > 18 || isDry(ctx.self),
     };
   },
 };
@@ -62,7 +62,7 @@ const duel: Action = {
     if (!ctx.perception.acquired || !ctx.enemy) return 0;
     // Holding a firing distance with nothing to fire is just letting the clock
     // run, which the hunter loses.
-    if (ctx.self.ammo <= 0) return 0;
+    if (isDry(ctx.self)) return 0;
     // Best when already near the preferred range and healthy enough to trade.
     const band = 1 - Math.min(1, Math.abs(ctx.range - ctx.tuning.preferredRange) / 70);
     const health = ctx.self.hp / ctx.config.loadout[ctx.self.team].maxHp;
@@ -149,7 +149,7 @@ const ambush: Action = {
  * own. A scan into empty air or an overdrive at 150 m is a wasted round.
  */
 function chooseItem(ctx: BrainContext): ItemChoice {
-  const ready = (kind: 'scan' | 'snare' | 'overdrive'): number =>
+  const ready = (kind: 'scan' | 'snare' | 'overdrive' | 'overcharge'): number =>
     ctx.self.items.findIndex((slot) => slot.kind === kind && slot.charges > 0 && slot.cooldown <= 0);
 
   const items = ctx.config.items;
@@ -178,6 +178,21 @@ function chooseItem(ctx: BrainContext): ItemChoice {
       const offAim = Math.abs(angleDelta(self.aimYaw, desired.yaw));
       if (offAim < 0.4 && !ctx.physics.isBlocked(self.pos, enemy.pos)) return snare;
     }
+  }
+
+  // Overcharge: only ever worth it with a target in sight and the magazine
+  // low enough that the free window is actually replacing bolts it does not
+  // have. Spent while still well stocked it gives away a slot for nothing.
+  const overcharge = ready('overcharge');
+  if (
+    overcharge >= 0 &&
+    self.overchargeTimer <= 0 &&
+    ctx.perception.acquired &&
+    !ctx.perception.fooled &&
+    self.ammo < ctx.config.loadout[self.team].ammo * 0.35 &&
+    ctx.range < ctx.config.loadout[self.team].range
+  ) {
+    return overcharge;
   }
 
   // Overdrive: the closing move. Only once the tag is a realistic outcome of

@@ -14,10 +14,11 @@ import { generateCityMap } from '../src/maps/generator.ts';
 import { loadMap } from '../src/maps/loader.ts';
 import { AiController, buildGrid } from '../src/ai/controller.ts';
 import type { VoxelGrid } from '../src/ai/nav/voxelGrid.ts';
-import { cloneConfig, type AiDifficulty, type SkyTagConfig } from '../src/sim/config.ts';
+import { CONFIG, cloneConfig, type AiDifficulty, type ItemKind, type SkyTagConfig } from '../src/sim/config.ts';
 import { initPhysics } from '../src/sim/physics.ts';
 import type { RoundEndReason } from '../src/sim/rules.ts';
 import { World } from '../src/sim/world.ts';
+import type { Team } from '../src/sim/types.ts';
 
 interface Args {
   matches: number;
@@ -29,6 +30,8 @@ interface Args {
   timeLimit: number | null;
   /** `--set loadout.hunter.damage=9` style overrides, for sweeping balance. */
   overrides: Array<[string, number]>;
+  /** `--kit hunter=scan,snare,overcharge` replaces a side's item slots. */
+  kits: Array<[Team, ItemKind[]]>;
   quiet: boolean;
 }
 
@@ -41,6 +44,7 @@ function parseArgs(argv: string[]): Args {
     seed: 1,
     timeLimit: null,
     overrides: [],
+    kits: [],
     quiet: false,
   };
   for (let i = 0; i < argv.length; i++) {
@@ -55,11 +59,25 @@ function parseArgs(argv: string[]): Args {
       case '--seed': args.seed = Number(consume()); break;
       case '--time-limit': args.timeLimit = Number(consume()); break;
       case '--set': args.overrides.push(parseOverride(consume())); break;
+      case '--kit': args.kits.push(parseKit(consume())); break;
       case '--quiet': args.quiet = true; break;
       default: break;
     }
   }
   return args;
+}
+
+/** `hunter=scan,snare,overcharge` into a side and its slot list. */
+function parseKit(raw: string | undefined): [Team, ItemKind[]] {
+  const [team, list] = (raw ?? '').split('=');
+  if (team !== 'hunter' && team !== 'runner') {
+    throw new Error(`--kit needs hunter=... or runner=..., got "${raw}"`);
+  }
+  const kinds = (list ?? '').split(',').filter((k) => k.length > 0) as ItemKind[];
+  for (const kind of kinds) {
+    if (!(kind in CONFIG.items)) throw new Error(`--kit: unknown item "${kind}"`);
+  }
+  return [team, kinds];
 }
 
 /** `loadout.hunter.damage=9` into a path and a number. */
@@ -153,6 +171,7 @@ async function main(): Promise<void> {
   // The countdown is dead time for AI-vs-AI runs.
   config.rules.countdown = 0;
   for (const [path, value] of args.overrides) applyOverride(config, path, value);
+  for (const [team, kinds] of args.kits) config.items.loadout[team] = kinds;
 
   const tally = emptyTally();
   const started = Date.now();

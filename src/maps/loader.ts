@@ -8,7 +8,7 @@
 
 import city01 from '../../maps/city01.json';
 import { Terrain, type TerrainDef } from './terrain.ts';
-import { tunnelSolids, type MapData, type Solid, type TunnelDef } from './types.ts';
+import { tunnelSolids, type CloudVolume, type MapData, type Solid, type TunnelDef } from './types.ts';
 
 const BUILTIN_MAPS: Record<string, unknown> = {
   city01,
@@ -62,7 +62,21 @@ export function parseMap(raw: unknown): MapData {
     m.tunnels.forEach((t, i) => solids.push(...tunnelSolids(parseTunnel(t, `${id}.tunnels[${i}]`))));
   }
 
-  return { id, name, size: { x: size.x, z: size.z }, ceiling, floor, terrain, spawns, solids };
+  const clouds = Array.isArray(m.clouds)
+    ? m.clouds.map((c, i) => parseCloud(c, `${id}.clouds[${i}]`))
+    : [];
+
+  return { id, name, size: { x: size.x, z: size.z }, ceiling, floor, terrain, spawns, solids, clouds };
+}
+
+function parseCloud(raw: unknown, where: string): CloudVolume {
+  if (typeof raw !== 'object' || raw === null) throw new Error(`${where}: must be an object`);
+  const c = raw as Record<string, unknown>;
+  const radius = c.radius;
+  if (typeof radius !== 'number' || !(radius > 0)) {
+    throw new Error(`${where}: radius must be a positive number`);
+  }
+  return { pos: requireVec3(c.pos, `${where}.pos`), radius };
 }
 
 function parseTerrain(raw: unknown, id: string): TerrainDef {

@@ -84,7 +84,10 @@ export interface LoadoutConfig {
  * - `snare` takes the runner's speed away, which is what it escapes with
  * - `overdrive` gives the hunter speed, which is what it tags with
  */
-export type ItemKind = 'decoy' | 'shield' | 'flash' | 'scan' | 'snare' | 'overdrive';
+export type ItemKind =
+  | 'decoy' | 'shield' | 'flash'
+  | 'scan' | 'snare' | 'overdrive'
+  | 'overcharge';
 
 interface ItemBase {
   /** Uses available per round. */
@@ -163,6 +166,18 @@ export interface OverdriveConfig extends ItemBase {
   speedMultiplier: number;
 }
 
+/**
+ * A window in which shooting costs no ammunition.
+ *
+ * Only worth carrying because `loadout.ammo` made bolts scarce: it converts a
+ * kit slot into the shooting the round no longer gives you for free, and it is
+ * the one item both sides want for the same reason.
+ */
+export interface OverchargeConfig extends ItemBase {
+  /** Seconds of free fire. */
+  duration: number;
+}
+
 export interface ItemsConfig {
   /** Slot order per side. An empty list means that side carries nothing. */
   loadout: Record<Team, ItemKind[]>;
@@ -172,6 +187,7 @@ export interface ItemsConfig {
   scan: ScanConfig;
   snare: SnareConfig;
   overdrive: OverdriveConfig;
+  overcharge: OverchargeConfig;
 }
 
 export interface WeaponConfig {
@@ -397,9 +413,15 @@ export const CONFIG: SkyTagConfig = {
     muzzleOffset: 2.2,
   },
   items: {
+    // Measured, not designed. `shield` and `overdrive` are still implemented
+    // and still configurable — they just lost their slots once ammunition was
+    // scarce. A damage soak is worth little when little damage is being dealt,
+    // and a hunter that already has to close does not need help closing: the
+    // same kit with `overdrive` in place of `snare` measured 41.7% with tag
+    // wins at 28.3%, against 50.0% and 33.3% for this one.
     loadout: {
-      hunter: ['scan', 'snare', 'overdrive'],
-      runner: ['decoy', 'shield', 'flash'],
+      hunter: ['scan', 'snare', 'overcharge'],
+      runner: ['decoy', 'flash', 'overcharge'],
     },
     decoy: {
       charges: 2,
@@ -447,6 +469,15 @@ export const CONFIG: SkyTagConfig = {
       cooldown: 20,
       duration: 4,
       speedMultiplier: 1.18,
+    },
+    overcharge: {
+      charges: 1,
+      cooldown: 20,
+      // Half the duration it started at. At 5 s it undid the thing that made
+      // the tag work: the hunter ran dry in 50% of rounds instead of 80%, and
+      // tag wins halved to 16.7%. A free-fire window has to be short enough
+      // that it is a burst, not a refill.
+      duration: 2.5,
     },
   },
   rules: {

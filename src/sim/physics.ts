@@ -10,7 +10,7 @@
 
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { Terrain } from '../maps/terrain.ts';
-import type { MapData } from '../maps/types.ts';
+import { segmentHitsSphere, type CloudVolume, type MapData } from '../maps/types.ts';
 import type { Vec3 } from './types.ts';
 
 let initialised = false;
@@ -47,6 +47,12 @@ export class PhysicsWorld {
    */
   private readonly terrain: Terrain | undefined;
   private readonly floor: number;
+  /**
+   * Cloud is not in the Rapier world at all: it answers exactly one query,
+   * `isBlocked`, and is transparent to every cast. Keeping it out of the
+   * collider set is what makes craft and bolts pass straight through.
+   */
+  private readonly clouds: readonly CloudVolume[];
 
   constructor(map: MapData) {
     if (!initialised) {
@@ -56,6 +62,7 @@ export class PhysicsWorld {
     this.world = new RAPIER.World({ x: 0, y: 0, z: 0 });
     this.terrain = map.terrain;
     this.floor = map.floor;
+    this.clouds = map.clouds ?? [];
 
     this.addGround(map);
     if (map.terrain) this.addTerrain(map);
@@ -201,7 +208,21 @@ export class PhysicsWorld {
     const dist = Math.hypot(dx, dy, dz);
     if (dist < 1e-6) return false;
     const dir = { x: dx / dist, y: dy / dist, z: dz / dist };
-    return this.raycast(from, dir, dist) !== null;
+    if (this.raycast(from, dir, dist) !== null) return true;
+    return this.inCloud(from, to);
+  }
+
+  /** True when a sight line passes through any bank of cloud. */
+  inCloud(from: Vec3, to: Vec3): boolean {
+    for (const cloud of this.clouds) {
+      if (segmentHitsSphere(from, to, cloud.pos, cloud.radius)) return true;
+    }
+    return false;
+  }
+
+  /** True when a point is inside cloud, which is how a craft knows it is hidden. */
+  isInsideCloud(pos: Vec3): boolean {
+    return this.inCloud(pos, pos);
   }
 
   /** True when a sphere at `pos` sits in open air, above ground and clear of solids. */

@@ -26,19 +26,30 @@ beforeAll(async () => {
   await initPhysics();
 });
 
-/** Slot index of an item in the runner's loadout. */
-function slotOf(kind: 'decoy' | 'shield' | 'flash'): number {
-  return CONFIG.items.loadout.runner.indexOf(kind);
-}
+/**
+ * Every item, in a fixed slot order.
+ *
+ * The shipping kits carry three each and leave `shield` and `overdrive` on the
+ * bench, but both are still real items with real rules, so the tests give each
+ * side everything rather than testing only what is currently equipped.
+ */
+const RUNNER_KIT = ['decoy', 'shield', 'flash', 'overcharge'] as const;
+const HUNTER_KIT = ['scan', 'snare', 'overdrive', 'overcharge'] as const;
 
-/** Slot index of an item in the hunter's loadout. */
-function hunterSlotOf(kind: 'scan' | 'snare' | 'overdrive'): number {
-  return CONFIG.items.loadout.hunter.indexOf(kind);
+const slotOf = (kind: (typeof RUNNER_KIT)[number]): number => RUNNER_KIT.indexOf(kind);
+const hunterSlotOf = (kind: (typeof HUNTER_KIT)[number]): number => HUNTER_KIT.indexOf(kind);
+
+/** A config whose loadouts hold every item, so any of them can be exercised. */
+function fullKitConfig() {
+  const config = cloneConfig();
+  config.items.loadout.runner = [...RUNNER_KIT];
+  config.items.loadout.hunter = [...HUNTER_KIT];
+  return config;
 }
 
 /** A live round with both craft parked where the test wants them. */
 function arena(seed = 1) {
-  const config = cloneConfig();
+  const config = fullKitConfig();
   config.rules.countdown = 0;
   config.rules.timeLimit = 60;
   const world = new World({ map, config, seed });
@@ -62,8 +73,16 @@ describe('item slots', () => {
   it('gives each side the loadout its config asks for', () => {
     const runner = createEntity(0, 'runner', { x: 0, y: 50, z: 0 }, CONFIG);
     const hunter = createEntity(1, 'hunter', { x: 0, y: 50, z: 0 }, CONFIG);
-    expect(runner.items.map((s) => s.kind)).toEqual(['decoy', 'shield', 'flash']);
-    expect(hunter.items.map((s) => s.kind)).toEqual(['scan', 'snare', 'overdrive']);
+    // The contract: a craft's slots mirror its side's configured kit.
+    expect(runner.items.map((s) => s.kind)).toEqual(CONFIG.items.loadout.runner);
+    expect(hunter.items.map((s) => s.kind)).toEqual(CONFIG.items.loadout.hunter);
+  });
+
+  it('ships the kits the balance was measured with', () => {
+    // Stated separately from the contract above so that changing a kit is a
+    // deliberate edit here, not something a config tweak slips through.
+    expect(CONFIG.items.loadout.runner).toEqual(['decoy', 'flash', 'overcharge']);
+    expect(CONFIG.items.loadout.hunter).toEqual(['scan', 'snare', 'overcharge']);
   });
 
   it('starts every slot loaded and ready', () => {
@@ -112,7 +131,7 @@ describe('item slots', () => {
   });
 
   it('cannot be used during the countdown or while stunned', () => {
-    const config = cloneConfig();
+    const config = fullKitConfig();
     config.rules.countdown = 2;
     const world = new World({ map, config, seed: 1 });
     const runner = world.entityByTeam('runner')!;
@@ -757,5 +776,91 @@ describe('items and the simulation contract', () => {
     world.step([neutralInput(), { ...neutralInput(), useItem: NO_ITEM }]);
     expect(runner.items.every((s) => s.charges === CONFIG.items[s.kind].charges)).toBe(true);
     world.dispose();
+  });
+});
+
+describe('overcharge', () => {
+  it('fires without drawing on the magazine, then goes back to costing bolts', () => {
+    const { world, config, hunter } = arena();
+    const slot = hunterSlotOf('overcharge');
+    const fire: PlayerInput = { ...neutralInput(), aimYaw: 0, fire: true };
+
+    world.step([{ ...fire, useItem: slot }, neutralInput()]);
+    const before = hunter.ammo;
+
+    world.stepFor(config.items.overcharge.duration - 0.3, [fire, neutralInput()]);
+    expect(hunter.overchargeTimer).toBeGreaterThan(0);
+    expect(hunter.shotsFired).toBeGreaterThan(1);
+    expect(hunter.ammo).toBe(before);
+
+    // Once the window shuts the gun is back on its own supply.
+    world.stepFor(1, [fire, neutralInput()]);
+    expect(hunter.ammo).toBeLessThan(before);
+    world.dispose();
+  });
+
+  it('lets a dry gun shoot again for the window only', () => {
+    const { world, config, hunter } = arena();
+    hunter.ammo = 0;
+    const fire: PlayerInput = { ...neutralInput(), aimYaw: 0, fire: true };
+
+    // Dry: nothing comes out.
+    expect(world.stepFor(0.5, [fire, neutralInput()]).some((e) => e.type === 'fire')).toBe(false);
+
+    world.step([{ ...fire, useItem: hunterSlotOf('overcharge') }, neutralInput()]);
+    const during = world.stepFor(config.items.overcharge.duration - 0.2, [fire, neutralInput()]);
+    expect(during.some((e) => e.type === 'fire')).toBe(true);
+
+    // Close the window before asserting, or the tail of it still fires.
+    world.stepFor(0.4, [fire, neutralInput()]);
+    expect(hunter.overchargeTimer).toBe(0);
+
+    const after = world.stepFor(1, [fire, neutralInput()]);
+    expect(hunter.ammo).toBe(0);
+    expect(after.some((e) => e.type === 'fire')).toBe(false);
+    world.dispose();
+  });
+});
+
+describe('cloud', () => {
+  // Empty sky with one bank in it, so nothing but the cloud can answer a
+  // query. On `city01` these lines run through the floaters.
+  const bare = {
+    id: 'sky', name: 'Empty Sky',
+    size: { x: 400, z: 400 }, ceiling: 200, floor: 0,
+    spawns: [{ x: -150, y: 120, z: 0 }, { x: 150, y: 120, z: 0 }],
+    solids: [],
+  };
+  const clouded = { ...bare, clouds: [{ pos: { x: 0, y: 120, z: -30 }, radius: 20 }] };
+  let physics: PhysicsWorld;
+  beforeAll(() => { physics = new PhysicsWorld(clouded); });
+
+  const a = { x: 0, y: 120, z: 0 };
+  const b = { x: 0, y: 120, z: -60 };
+
+  it('blocks a sight line that passes through it', () => {
+    expect(new PhysicsWorld(bare).isBlocked(a, b)).toBe(false);
+    expect(physics.isBlocked(a, b)).toBe(true);
+  });
+
+  it('leaves a line that misses it alone', () => {
+    expect(physics.isBlocked(a, { x: 60, y: 120, z: 0 })).toBe(false);
+  });
+
+  it('does not stop movement or bolts', () => {
+    // The whole point: you fly into weather, you do not bounce off it.
+    expect(physics.sphereCast(a, { x: 0, y: 0, z: -1 }, 60, 1.2)).toBeNull();
+    expect(physics.isClear({ x: 0, y: 120, z: -30 }, 1.2)).toBe(true);
+    expect(physics.isInsideCloud({ x: 0, y: 120, z: -30 })).toBe(true);
+  });
+
+  it('hides a craft from the CPU and from the radar alike', () => {
+    const self = createEntity(0, 'hunter', a, CONFIG, { aimYaw: 0 });
+    const enemy = createEntity(1, 'runner', b, CONFIG);
+    const p = new Perception();
+
+    p.update(self, enemy, [], physics, CONFIG, CONFIG.ai.difficulty.hard, CONFIG.sim.fixedDt);
+    expect(p.visible).toBe(false);
+    expect(radarBlips(self, enemy, [], CONFIG, (f, t) => physics.isBlocked(f, t))).toEqual([]);
   });
 });

@@ -48,6 +48,7 @@ export class SceneRenderer {
     this.addLights();
     this.addGround(map);
     this.addSolids(map);
+    this.addClouds(map);
     this.addCeilingMarker(map);
   }
 
@@ -141,6 +142,36 @@ export class SceneRenderer {
         edges.rotation.copy(mesh.rotation);
         this.scene.add(edges);
       }
+    }
+  }
+
+  /**
+   * Draw the banks of cloud.
+   *
+   * They have to read as something you fly *into*, not something you steer
+   * around, or a player will treat them like every other obstacle on the map.
+   * So they are drawn back-face-first and translucent: the surface is barely
+   * there from outside, and once inside you are looking at the far wall of the
+   * sphere, which whites out the view the way being in cloud should.
+   */
+  private addClouds(map: MapData): void {
+    const material = new THREE.MeshLambertMaterial({
+      color: 0xf2f6ff,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+
+    for (const cloud of map.clouds ?? []) {
+      // Low segment counts on purpose: these are big and soft, and there are
+      // dozens of them overlapping.
+      const mesh = new THREE.Mesh(new THREE.SphereGeometry(cloud.radius, 12, 8), material);
+      mesh.position.set(cloud.pos.x, cloud.pos.y, cloud.pos.z);
+      // Flattened the same way the data is, so a bank reads as weather.
+      mesh.scale.y = 0.55;
+      mesh.renderOrder = 1;
+      this.scene.add(mesh);
     }
   }
 

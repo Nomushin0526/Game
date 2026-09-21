@@ -61,7 +61,9 @@ export function stepWeapon(
   shooter.fireCooldown = loadout.fireInterval;
   shooter.sinceLastShot = 0;
   shooter.shotsFired++;
-  shooter.ammo--;
+  // Overcharge is the one thing that fires for free; heat still applies, so it
+  // is a window of sustained fire rather than an infinite one.
+  if (shooter.overchargeTimer <= 0) shooter.ammo--;
   shooter.heat = Math.min(loadout.heatCapacity, shooter.heat + 1);
   if (shooter.heat >= loadout.heatCapacity) {
     shooter.overheated = true;
@@ -80,7 +82,7 @@ function canFire(shooter: EntityState, input: PlayerInput, ctx: WeaponContext): 
     shooter.alive &&
     shooter.stunTimer <= 0 &&
     shooter.fireCooldown <= 0 &&
-    shooter.ammo > 0
+    (shooter.ammo > 0 || shooter.overchargeTimer > 0)
   );
 }
 

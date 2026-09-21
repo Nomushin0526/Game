@@ -65,6 +65,31 @@ export interface TunnelDef {
   floor?: boolean;
 }
 
+/**
+ * A bank of cloud: it blocks sight, and nothing else.
+ *
+ * Everything else on a map is solid, which makes it useless above the
+ * rooftops — the top half of a 150 m arena was empty air, so a chase up there
+ * came down to who was faster. A cloud fills that volume without adding a
+ * crash hazard at altitude: craft, bolts and grenades all pass straight
+ * through, while line of sight does not. That makes altitude somewhere you can
+ * actually hide rather than somewhere you merely get caught more slowly.
+ *
+ * Deliberately not a `Solid` and not in the Rapier world at all. Sight is the
+ * only query it answers, so it is tested analytically in `PhysicsWorld`.
+ *
+ * Also deliberately invisible to the AI's cover search. Listing cloud banks as
+ * cover hotspots was tried and measured: the CPU went up and camped in them,
+ * clock wins rose to 53% and tag wins fell to 10%. Cloud works as something a
+ * chase happens to pass through, not as a destination.
+ */
+export interface CloudVolume {
+  /** Centre of the bank. */
+  pos: Vec3;
+  /** Radius, metres. Banks are spheres; overlap them for larger shapes. */
+  radius: number;
+}
+
 export interface MapData {
   id: string;
   name: string;
@@ -79,6 +104,40 @@ export interface MapData {
   /** Candidate spawn positions. `World` picks a well-separated pair. */
   spawns: Vec3[];
   solids: Solid[];
+  /** Sight-blocking, non-solid volumes. Optional: most maps have none. */
+  clouds?: CloudVolume[];
+}
+
+/**
+ * Whether a segment passes through a sphere.
+ *
+ * The standard closest-point-on-segment test: clamp the projection of the
+ * centre onto the segment, then compare that distance to the radius.
+ */
+export function segmentHitsSphere(
+  from: Vec3,
+  to: Vec3,
+  centre: Vec3,
+  radius: number,
+): boolean {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dz = to.z - from.z;
+  const lengthSq = dx * dx + dy * dy + dz * dz;
+
+  const fx = centre.x - from.x;
+  const fy = centre.y - from.y;
+  const fz = centre.z - from.z;
+
+  // A degenerate segment is just its start point.
+  const t = lengthSq < 1e-12
+    ? 0
+    : Math.max(0, Math.min(1, (fx * dx + fy * dy + fz * dz) / lengthSq));
+
+  const nx = fx - dx * t;
+  const ny = fy - dy * t;
+  const nz = fz - dz * t;
+  return nx * nx + ny * ny + nz * nz <= radius * radius;
 }
 
 /** Vertical extent of a solid, as [bottom, top] in metres. */

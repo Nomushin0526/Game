@@ -104,6 +104,8 @@ export interface EntityState {
   snareTimer: number;
   /** Seconds left of an overdrive surge: faster, and boost costs nothing. */
   overdriveTimer: number;
+  /** Seconds left of free fire. Shots do not draw on `ammo` while positive. */
+  overchargeTimer: number;
   /** Bolts fired this round, for the result screen and phase 5's player model. */
   shotsFired: number;
   shotsHit: number;

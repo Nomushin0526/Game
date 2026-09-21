@@ -76,6 +76,7 @@ export function stepItems(
   entity.revealTimer = Math.max(0, entity.revealTimer - dt);
   entity.snareTimer = Math.max(0, entity.snareTimer - dt);
   entity.overdriveTimer = Math.max(0, entity.overdriveTimer - dt);
+  entity.overchargeTimer = Math.max(0, entity.overchargeTimer - dt);
 
   const index = input.useItem;
   if (index === NO_ITEM || !ctx.controlEnabled || !entity.alive) return [];
@@ -98,6 +99,7 @@ function use(kind: ItemKind, entity: EntityState, ctx: ItemContext): SimEvent[] 
     case 'scan': return pulseScan(entity, ctx);
     case 'snare': return throwSnare(entity, ctx);
     case 'overdrive': return engageOverdrive(entity, ctx);
+    case 'overcharge': return engageOvercharge(entity, ctx);
   }
 }
 
@@ -188,6 +190,12 @@ function throwSnare(entity: EntityState, ctx: ItemContext): SimEvent[] {
   ctx.spawnProjectile(charge);
 
   return [{ type: 'itemUsed', entityId: entity.id, kind: 'snare', pos: { ...charge.pos } }];
+}
+
+/** Open a window where the gun draws on nothing. */
+function engageOvercharge(entity: EntityState, ctx: ItemContext): SimEvent[] {
+  entity.overchargeTimer = ctx.config.items.overcharge.duration;
+  return [{ type: 'itemUsed', entityId: entity.id, kind: 'overcharge', pos: { ...entity.pos } }];
 }
 
 function engageOverdrive(entity: EntityState, ctx: ItemContext): SimEvent[] {

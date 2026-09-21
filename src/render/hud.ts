@@ -122,8 +122,10 @@ export class Hud {
     this.heat.root.classList.toggle('overheated', self.overheated);
     // Heat says how fast you may shoot; this says how much shooting is left in
     // the round at all. Empty, the tag is the only ending still open.
-    this.ammo.set(self.ammo / loadout.ammo, self.ammo > 0 ? `${self.ammo}` : 'DRY');
-    this.ammo.root.classList.toggle('dry', self.ammo <= 0);
+    const free = self.overchargeTimer > 0;
+    this.ammo.set(free ? 1 : self.ammo / loadout.ammo, free ? '∞' : self.ammo > 0 ? `${self.ammo}` : 'DRY');
+    this.ammo.root.classList.toggle('dry', !free && self.ammo <= 0);
+    this.ammo.root.classList.toggle('free', free);
 
     this.updateItems(self.items);
     // A flash whites the pane out and fades; the sim decides how long.
@@ -328,6 +330,7 @@ const ITEM_LABELS: Record<ItemKind, string> = {
   scan: 'スキャン',
   snare: 'スネア',
   overdrive: 'オーバードライブ',
+  overcharge: 'オーバーチャージ',
 };
 
 /** A labelled fill bar. */

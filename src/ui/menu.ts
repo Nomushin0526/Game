@@ -40,7 +40,7 @@ export function showMenu(root: HTMLElement, defaults: MenuDefaults): Promise<Mat
         'subtitle',
         '空中鬼ごっこ — 鬼は速く重い。逃亡者は時間まで逃げ切れば勝ち。' +
           '弾数は1ラウンドぶんしかない（リロードなし）ので、撃ち尽くしたら捕まえるしかない。' +
-          '逃亡者はデコイ・シールド・フラッシュ、鬼はスキャン・スネア・オーバードライブ。',
+          '上空の雲は通り抜けられるが視線を遮る。',
       ),
     );
 

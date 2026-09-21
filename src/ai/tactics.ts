@@ -367,7 +367,7 @@ export function jink(ctx: BrainContext, destination: Vec3, threat: Vec3): Vec3 {
 /** True when this craft can legitimately take the shot right now. */
 export function canShoot(ctx: BrainContext, at: Vec3): boolean {
   const { self, config, physics } = ctx;
-  if (self.ammo <= 0) return false;
+  if (self.ammo <= 0 && self.overchargeTimer <= 0) return false;
   if (self.overheated || !self.alive || self.stunTimer > 0) return false;
   if (distance(self.pos, at) > config.loadout[self.team].range) return false;
   return !physics.isBlocked(self.pos, at);

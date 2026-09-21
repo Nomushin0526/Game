@@ -11,12 +11,14 @@
 import { Rng } from '../sim/rng.ts';
 import type { Vec3 } from '../sim/types.ts';
 import { Terrain } from './terrain.ts';
-import { tunnelSolids, type MapData, type Solid, type TunnelDef } from './types.ts';
+import { tunnelSolids, type CloudVolume, type MapData, type Solid, type TunnelDef } from './types.ts';
 
 export interface GenerateOptions {
   sizeX?: number;
   sizeZ?: number;
   ceiling?: number;
+  /** Clusters of sight-blocking cloud placed in the upper air. */
+  cloudBanks?: number;
   /** Blocks per axis in the street grid. */
   gridCells?: number;
   /** Chance that a grid cell holds a building. */
@@ -41,6 +43,7 @@ const DEFAULTS: Required<GenerateOptions> = {
   sizeX: 400,
   sizeZ: 400,
   ceiling: 150,
+  cloudBanks: 7,
   gridCells: 8,
   buildingDensity: 0.7,
   terrainHeight: 22,
@@ -94,6 +97,7 @@ export function generateCityMap(seed: number, options: GenerateOptions = {}): Ma
     terrain,
     spawns: generateSpawns(rng, opt, solids, ground),
     solids,
+    clouds: generateClouds(rng, opt),
   };
 }
 
@@ -377,6 +381,46 @@ function addFloaters(rng: Rng, opt: Required<GenerateOptions>, solids: Solid[]):
       tag: 'floater',
     });
   }
+}
+
+/**
+ * Fill the upper air with cloud.
+ *
+ * Solids cluster around the rooftops, which left the top half of the arena as
+ * open sky where a chase is decided by nothing but speed. Cloud gives that
+ * volume something to hide in without making altitude lethal.
+ *
+ * Banks are placed in overlapping clusters rather than one at a time: a single
+ * sphere is a ball you fly around, while a clump of them is weather you go
+ * into and lose someone in.
+ */
+function generateClouds(rng: Rng, opt: Required<GenerateOptions>): CloudVolume[] {
+  const clouds: CloudVolume[] = [];
+  const base = UPPER_LAYER_FLOOR + 10;
+  const top = opt.ceiling - 10;
+  if (top <= base) return clouds;
+
+  for (let i = 0; i < opt.cloudBanks; i++) {
+    const centre = {
+      x: rng.range(-opt.sizeX / 2, opt.sizeX / 2),
+      y: rng.range(base, top),
+      z: rng.range(-opt.sizeZ / 2, opt.sizeZ / 2),
+    };
+    const puffs = 2 + Math.floor(rng.next() * 3);
+    for (let p = 0; p < puffs; p++) {
+      const radius = rng.range(16, 30);
+      clouds.push({
+        pos: {
+          x: centre.x + rng.range(-radius, radius),
+          // Flattened: cloud spreads sideways far more than it stacks.
+          y: centre.y + rng.range(-radius * 0.35, radius * 0.35),
+          z: centre.z + rng.range(-radius, radius),
+        },
+        radius,
+      });
+    }
+  }
+  return clouds;
 }
 
 /** Rejection-sample points that sit in open air, spread around the arena. */
