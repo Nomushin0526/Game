@@ -81,13 +81,43 @@ describe('flight', () => {
     expect(e.pos.z).toBeLessThan(100);
   });
 
-  it('coasts to a stop when the stick is released', () => {
+  it('glides when the stick is released, rather than stopping dead', () => {
     const e = craft({ x: -150, y: 60, z: 100 });
     fly(e, input({ move: { x: 0, y: 0, z: 1 } }), 3);
-    expect(length(e.vel)).toBeGreaterThan(20);
+    const cruising = length(e.vel);
+    expect(cruising).toBeGreaterThan(20);
 
-    fly(e, input(), 3);
-    expect(length(e.vel)).toBeCloseTo(0, 5);
+    // Speed bleeds off as a fraction per second, so it is well down after a
+    // second and still carrying after three. Stopping dead is what made the
+    // old model read as flat.
+    fly(e, input(), 1);
+    expect(length(e.vel)).toBeLessThan(cruising * 0.7);
+    expect(length(e.vel)).toBeGreaterThan(cruising * 0.2);
+
+    fly(e, input(), 2);
+    expect(length(e.vel)).toBeGreaterThan(0.5);
+    expect(length(e.vel)).toBeLessThan(cruising * 0.2);
+  });
+
+  it('carries its old heading through a turn instead of pivoting', () => {
+    // The point of thrust-and-drag: the velocity you had decays while the one
+    // you asked for builds, so a reversal carves rather than snapping over.
+    const e = craft({ x: 0, y: 90, z: 0 });
+    fly(e, input({ move: { x: 0, y: 0, z: 1 } }), 4);
+    const before = e.vel.z;
+    expect(before).toBeLessThan(0);
+
+    // Ask for a right-angle turn. The old heading has to bleed off rather
+    // than being overwritten, so for a while the craft is going both ways at
+    // once and its total speed dips below either.
+    fly(e, input({ move: { x: 1, y: 0, z: 0 } }), 0.2);
+    expect(e.vel.z).toBeLessThan(0);
+    expect(Math.abs(e.vel.x)).toBeGreaterThan(1);
+    expect(length(e.vel)).toBeLessThan(Math.abs(before));
+
+    // It does come round, it just takes the time a turn should take.
+    fly(e, input({ move: { x: 1, y: 0, z: 0 } }), 3);
+    expect(Math.abs(e.vel.z)).toBeLessThan(2);
   });
 
   it('does not let diagonal input exceed cruise speed', () => {
@@ -100,20 +130,25 @@ describe('flight', () => {
     const e = craft({ x: -150, y: 60, z: 150 });
     const forward = input({ move: { x: 0, y: 0, z: 1 } });
 
-    fly(e, { ...forward, boost: true }, 2);
+    // Longer than the old model needed: under drag the approach to terminal
+    // velocity is exponential, so it arrives asymptotically rather than at a
+    // fixed moment.
+    fly(e, { ...forward, boost: true }, 3);
     const boosted = length(e.vel);
     expect(boosted).toBeCloseTo(
       CONFIG.loadout.runner.cruiseSpeed * CONFIG.loadout.runner.boostMultiplier,
-      2,
+      1,
     );
     expect(e.boosting).toBe(true);
-    expect(e.boostFuel).toBeCloseTo(CONFIG.flight.boostCapacity - CONFIG.loadout.runner.boostDrain * 2, 2);
+    expect(e.boostFuel).toBeCloseTo(CONFIG.flight.boostCapacity - CONFIG.loadout.runner.boostDrain * 3, 2);
 
     fly(e, forward, 1);
     expect(e.boosting).toBe(false);
-    expect(length(e.vel)).toBeCloseTo(CONFIG.loadout.runner.cruiseSpeed, 2);
+    // Settling back to cruise is exponential too, so a second gets close
+    // without landing exactly on it.
+    expect(length(e.vel)).toBeCloseTo(CONFIG.loadout.runner.cruiseSpeed, 0);
     expect(e.boostFuel).toBeCloseTo(
-      CONFIG.flight.boostCapacity - CONFIG.loadout.runner.boostDrain * 2 + CONFIG.loadout.runner.boostRegen,
+      CONFIG.flight.boostCapacity - CONFIG.loadout.runner.boostDrain * 3 + CONFIG.loadout.runner.boostRegen,
       2,
     );
   });
@@ -268,5 +303,40 @@ describe('flight', () => {
     const e = craft({ x: -150, y: 60, z: 150 });
     fly(e, input({ move: { x: 0, y: 0, z: 1 } }), 5, context(fast));
     expect(length(e.vel)).toBeCloseTo(50, 2);
+  });
+
+  it('dashes as an impulse, which then bleeds off like any other speed', () => {
+    const e = craft({ x: 0, y: 90, z: 0 });
+    const forward = input({ move: { x: 0, y: 0, z: 1 } });
+    fly(e, forward, 4);
+    const cruising = length(e.vel);
+
+    // One tick with the dash flag: all of it arrives at once.
+    fly(e, { ...forward, dash: true }, 1 / 60);
+    const dashed = length(e.vel);
+    expect(dashed).toBeGreaterThan(cruising + CONFIG.flight.dashImpulse * 0.7);
+    expect(e.boostFuel).toBeCloseTo(CONFIG.flight.boostCapacity - CONFIG.flight.dashCost, 2);
+
+    // And then decays back towards cruise rather than being clipped.
+    fly(e, forward, 1.5);
+    expect(length(e.vel)).toBeLessThan(dashed);
+    expect(length(e.vel)).toBeGreaterThan(cruising * 0.9);
+  });
+
+  it('will not dash again until the cooldown is up, or with an empty gauge', () => {
+    const e = craft({ x: 0, y: 90, z: 0 });
+    const dashing = input({ move: { x: 0, y: 0, z: 1 } });
+
+    fly(e, { ...dashing, dash: true }, 1 / 60);
+    const after = length(e.vel);
+    // Immediately again: refused, so speed only follows the ordinary curve.
+    fly(e, { ...dashing, dash: true }, 1 / 60);
+    expect(length(e.vel)).toBeLessThan(after + 1);
+
+    const dry = craft({ x: 0, y: 90, z: 0 }, { boostFuel: 1 });
+    const before = length(dry.vel);
+    fly(dry, { ...dashing, dash: true }, 1 / 60);
+    expect(length(dry.vel)).toBeLessThan(before + CONFIG.flight.dashImpulse * 0.5);
+    expect(dry.boostFuel).toBeGreaterThan(0);
   });
 });

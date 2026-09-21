@@ -33,6 +33,8 @@ export class GamepadInput implements InputSource {
   private invertY: boolean;
   /** Face buttons held at the previous sample, for edge detection. */
   private heldItems = new Set<number>();
+  /** Boost trigger state last sample, so a dash fires on the press only. */
+  private boostHeld = false;
 
   constructor(
     private readonly index: number,
@@ -91,8 +93,17 @@ export class GamepadInput implements InputSource {
       aimPitch: this.pitch,
       fire: pressed(pad, BUTTON_RT),
       boost: pressed(pad, BUTTON_LT),
+      // The press itself dashes; holding it keeps the sustained boost.
+      dash: this.takeDashEdge(pressed(pad, BUTTON_LT)),
       useItem: this.pickItem(pad),
     };
+  }
+
+  /** True only on the sample where the boost trigger went down. */
+  private takeDashEdge(held: boolean): boolean {
+    const edge = held && !this.boostHeld;
+    this.boostHeld = held;
+    return edge;
   }
 
   /** The item slot newly pressed this sample, or `NO_ITEM`. */

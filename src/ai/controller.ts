@@ -99,6 +99,8 @@ export class AiController implements InputSource {
   private sinceDecision = Number.POSITIVE_INFINITY;
   /** Latched for one tick, so a charge is spent once rather than every tick. */
   private pendingItem = NO_ITEM;
+  /** Boost state last tick, so a dash fires on the press rather than while held. */
+  private wantedBoost = false;
   /** Which team the brain was built for, so a side swap rebuilds it. */
   private brainTeam: EntityState['team'] | null = null;
   private brain: Brain = hunterBrain;
@@ -285,6 +287,7 @@ export class AiController implements InputSource {
     this.currentAction = null;
     this.sinceDecision = Number.POSITIVE_INFINITY;
     this.pendingItem = NO_ITEM;
+    this.wantedBoost = false;
     this.aimYaw = self.aimYaw;
     this.aimPitch = self.aimPitch;
     this.pendingDodge = null;
@@ -311,17 +314,49 @@ export class AiController implements InputSource {
       aimYaw: this.aimYaw,
       aimPitch: this.aimPitch,
       boost: intent.boost && self.boostFuel > this.config.flight.boostMinToEngage,
+      // The same rule a gamepad gets: the moment boost is newly wanted is a
+      // dash. Without this the CPU would be playing a game the human is not.
+      dash: false,
       fire: intent.fire && this.rng.next() < this.tuning.fireWillingness,
       useItem: this.pendingItem,
     };
     this.pendingItem = NO_ITEM;
+    input.dash = input.boost && !this.wantedBoost;
+    this.wantedBoost = input.boost;
 
     if (intent.moveTo) {
-      let direction = normalize(sub(intent.moveTo, self.pos));
+      let direction = this.steerTowards(intent.moveTo, self, input.boost);
       direction = this.avoidObstacles(direction, self);
       input.move = worldToLocalMove(direction, this.aimYaw, this.aimPitch);
     }
     return input;
+  }
+
+  /**
+   * Which way to push the thrusters to end up going at the target.
+   *
+   * Pointing straight at the destination is only correct for a craft with no
+   * momentum, which is what this used to be. Once velocity carries, aiming at
+   * the point overshoots it and then circles: the craft is always thrusting
+   * towards somewhere it is already travelling past. Steering by the
+   * *difference* between the velocity it wants and the one it has fixes that
+   * for free — off course it turns hard, overshooting it thrusts backwards to
+   * brake, and on course it does nothing but hold speed.
+   */
+  private steerTowards(target: Vec3, self: EntityState, boosting: boolean): Vec3 {
+    const toTarget = sub(target, self.pos);
+    const distance = Math.hypot(toTarget.x, toTarget.y, toTarget.z);
+    if (distance < 1e-3) return normalize(scale(self.vel, -1));
+
+    const loadout = this.config.loadout[self.team];
+    const top = loadout.cruiseSpeed * (boosting ? loadout.boostMultiplier : 1);
+    // Ease off on the approach, so arriving does not mean flying through.
+    const wanted = scale(toTarget, Math.min(top, distance * 2) / distance);
+
+    const correction = sub(wanted, self.vel);
+    const effort = Math.hypot(correction.x, correction.y, correction.z);
+    // Already travelling exactly as wanted: coast rather than jitter.
+    return effort < 0.5 ? normalize(toTarget) : scale(correction, 1 / effort);
   }
 
   /** Swing the view towards the target at the difficulty's turn rate. */

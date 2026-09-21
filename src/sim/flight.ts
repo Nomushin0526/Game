@@ -87,19 +87,87 @@ export function stepFlight(
 
   const boosted = entity.boosting ? loadout.boostMultiplier : 1;
   const maxSpeed = loadout.cruiseSpeed * boosted * tempo(entity, config);
-  const target = scale(wish, maxSpeed);
   const agility = loadout.accel;
-  const accel = entity.boosting ? agility + flight.boostAccel : agility;
-  const rate = wishStrength > 0 ? accel : flight.decel;
-
-  const delta = { x: target.x - entity.vel.x, y: target.y - entity.vel.y, z: target.z - entity.vel.z };
-  const deltaLen = length(delta);
-  const stepLen = rate * dt;
-  entity.vel = deltaLen <= stepLen ? target : add(entity.vel, scale(scale(delta, 1 / deltaLen), stepLen));
+  const thrust = entity.boosting ? agility + flight.boostAccel : agility;
+  entity.vel = integrate(entity.vel, wish, wishStrength, thrust, maxSpeed, flight, dt);
+  applyDash(entity, input, wish, wishStrength, canSteer, config, dt);
 
   const events = sweepMove(entity, ctx);
   applyBounds(entity, bounds, flight.bodyRadius);
   return events;
+}
+
+/**
+ * Spend a dash: one tick's worth of speed, all at once.
+ *
+ * Added straight to the velocity rather than raising the top speed, so it is
+ * felt as a shove and then bleeds away on the ordinary drag curve. Aimed
+ * along whatever the craft is asking for, or straight ahead when it is asking
+ * for nothing, so a dash out of a standstill still goes somewhere.
+ */
+function applyDash(
+  entity: EntityState,
+  input: PlayerInput,
+  wish: Vec3,
+  wishStrength: number,
+  canSteer: boolean,
+  config: SkyTagConfig,
+  dt: number,
+): void {
+  const flight = config.flight;
+  entity.dashCooldown = Math.max(0, entity.dashCooldown - dt);
+
+  if (!input.dash || !canSteer) return;
+  if (entity.dashCooldown > 0 || entity.boostFuel < flight.dashCost) return;
+
+  const direction = wishStrength > 1e-6 ? scale(wish, 1 / wishStrength) : entityForward(entity);
+  entity.vel = add(entity.vel, scale(direction, flight.dashImpulse));
+  entity.boostFuel -= flight.dashCost;
+  entity.dashCooldown = flight.dashCooldown;
+}
+
+/**
+ * Advance velocity by one step of thrust against drag.
+ *
+ * The craft used to steer its velocity vector straight at a target velocity
+ * at a fixed rate, which is simple and reads as flat: accelerating, braking
+ * and turning all took the same uniform half-second, and releasing the stick
+ * stopped you in a straight line with nothing carried over.
+ *
+ * Thrust and drag instead give each of those a different shape. Under thrust
+ * the drag coefficient is fixed by the top speed (`thrust / maxSpeed`), so
+ * terminal velocity still lands exactly on `maxSpeed` and none of the balance
+ * numbers move — but the *old* velocity now decays while the new one builds,
+ * so a turn carves instead of pivoting. With no thrust, speed bleeds off at
+ * `coastDrag` per second, so the craft glides.
+ */
+function integrate(
+  vel: Vec3,
+  wish: Vec3,
+  wishStrength: number,
+  thrust: number,
+  maxSpeed: number,
+  flight: SkyTagConfig['flight'],
+  dt: number,
+): Vec3 {
+  const thrusting = wishStrength > 1e-6 && maxSpeed > 1e-6;
+  // Chosen so that thrust and drag balance exactly at `maxSpeed`; anything
+  // else would quietly move every speed in the game.
+  const drag = thrusting ? thrust / maxSpeed : flight.coastDrag;
+
+  // Scaled by the wish itself rather than normalised, so a half-deflected
+  // stick is half thrust and settles at half the top speed.
+  const accel = thrusting ? scale(wish, thrust) : { x: 0, y: 0, z: 0 };
+  // No ceiling is applied. Drag is its own bound: thrusting from `maxSpeed`
+  // on one axis to `maxSpeed` on another, the magnitude only ever dips (to
+  // `maxSpeed / root 2` at the midpoint) and never exceeds. Anything faster
+  // than that, such as a dash impulse, bleeds off on the same curve rather
+  // than being clipped, which is what makes an impulse worth spending.
+  return {
+    x: vel.x + (accel.x - vel.x * drag) * dt,
+    y: vel.y + (accel.y - vel.y * drag) * dt,
+    z: vel.z + (accel.z - vel.z * drag) * dt,
+  };
 }
 
 /**

@@ -24,6 +24,7 @@ function scriptedInputs(seed: number, ticks: number): PlayerInput[][] {
       aimPitch: rng.range(-1, 1),
       fire: rng.bool(0.3),
       boost: rng.bool(0.4),
+      dash: rng.bool(0.1),
       useItem: rng.bool(0.05) ? rng.int(0, 2) : NO_ITEM,
     })));
   }

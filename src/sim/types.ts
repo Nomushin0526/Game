@@ -32,6 +32,11 @@ export interface PlayerInput {
   fire: boolean;
   boost: boolean;
   /**
+   * A dash this tick. Edge-triggered by whoever produces the input, the same
+   * way `useItem` is: held down it must not dash every tick.
+   */
+  dash: boolean;
+  /**
    * Item slot to use this tick, or -1 for none.
    *
    * Edge-triggered by whoever produces the input: a source holds the index for
@@ -48,6 +53,7 @@ export function neutralInput(): PlayerInput {
     aimPitch: 0,
     fire: false,
     boost: false,
+    dash: false,
     useItem: NO_ITEM,
   };
 }
@@ -78,6 +84,8 @@ export interface EntityState {
   cooldownRemaining: number;
   /** Seconds until the next shot is allowed. */
   fireCooldown: number;
+  /** Seconds until another dash is allowed. */
+  dashCooldown: number;
   /** Bolts left for the round. At zero the gun is dry until the next round. */
   ammo: number;
   /** Seconds since the last shot, which gates heat decay. */

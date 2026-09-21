@@ -28,6 +28,7 @@ export function createEntity(
     overheated: false,
     cooldownRemaining: 0,
     fireCooldown: 0,
+    dashCooldown: 0,
     ammo: config.loadout[team].ammo,
     sinceLastShot: Number.POSITIVE_INFINITY,
     invulnTimer: 0,

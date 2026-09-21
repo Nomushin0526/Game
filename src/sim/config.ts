@@ -57,8 +57,13 @@ export interface LoadoutConfig {
   /** Level-flight speed in m/s. */
   cruiseSpeed: number;
   /**
-   * Acceleration towards the requested velocity, m/s^2 — per side, because
-   * this is agility, and agility is not symmetric in a chase.
+   * Thrust, m/s^2 — per side, because this is agility, and agility is not
+   * symmetric in a chase.
+   *
+   * Roughly doubled from 45 when the flight model moved to thrust-and-drag.
+   * Under drag the approach to top speed is exponential rather than linear,
+   * so the same number would have felt markedly more sluggish off the mark;
+   * this keeps the initial punch while letting the tail taper.
    *
    * Measured: the pursuer only has to point at the target, while the evader
    * has to change course faster than the pursuer can follow. Cutting it for
@@ -219,8 +224,33 @@ export interface FlightConfig {
   bodyRadius: number;
   /** Default acceleration, m/s^2. A loadout's own `accel` overrides it. */
   accel: number;
-  /** Deceleration when the stick is released, m/s^2. */
-  decel: number;
+  /**
+   * How fast speed bleeds off when nothing is being asked of the thrusters,
+   * as a fraction of current speed per second.
+   *
+   * This replaced a flat `decel` in m/s^2, and the reason is the whole of the
+   * "movement feels flat" note from playtesting. The old model dragged the
+   * velocity vector straight towards a target at a constant rate, which makes
+   * starting, stopping and turning all take the same uniform half-second and
+   * leaves nothing carrying through a turn. Exponential bleed means you coast,
+   * and coasting is what makes a direction change cost something.
+   */
+  coastDrag: number;
+  /**
+   * Instant speed added by a dash, m/s.
+   *
+   * Boost is a sustained multiplier, which cannot feel sharp however large it
+   * is: you press it and the craft gets faster over about a second. An
+   * impulse is the opposite — all of it arrives on one tick and then bleeds
+   * off down the same drag curve as everything else. It is the punchiest
+   * thing available without touching top speed, so it costs gauge and sits
+   * behind a cooldown rather than being free.
+   */
+  dashImpulse: number;
+  /** Seconds before another dash. */
+  dashCooldown: number;
+  /** Gauge spent per dash. */
+  dashCost: number;
   /** Extra acceleration applied while boosting, m/s^2. */
   boostAccel: number;
   boostCapacity: number;
@@ -420,7 +450,10 @@ export const CONFIG: SkyTagConfig = {
   flight: {
     bodyRadius: 1.2,
     accel: 45,
-    decel: 30,
+    coastDrag: 0.7,
+    dashImpulse: 19,
+    dashCooldown: 1.1,
+    dashCost: 18,
     boostAccel: 25,
     boostCapacity: 100,
     boostMinToEngage: 10,
@@ -601,7 +634,7 @@ export const CONFIG: SkyTagConfig = {
       range: 130,
       projectileSpeed: 95,
       cruiseSpeed: 25,
-      accel: 45,
+      accel: 92,
       boostMultiplier: 1.95,
       boostDrain: 32,
       boostRegen: 14,
@@ -618,7 +651,7 @@ export const CONFIG: SkyTagConfig = {
       range: 110,
       projectileSpeed: 85,
       cruiseSpeed: 22,
-      accel: 45,
+      accel: 92,
       boostMultiplier: 1.85,
       boostDrain: 26,
       boostRegen: 19,

@@ -30,7 +30,10 @@ export const DEFAULT_BINDINGS: KeyBindings = {
   left: ['KeyA'],
   right: ['KeyD'],
   up: ['Space'],
-  down: ['ControlLeft', 'ControlRight'],
+  // `C` first: on macOS Ctrl is the secondary-click modifier and is caught by
+  // system shortcuts, which made descending awkward in playtesting. Ctrl is
+  // kept for anyone already used to it.
+  down: ['KeyC', 'ControlLeft', 'ControlRight'],
   boost: ['ShiftLeft', 'ShiftRight'],
   items: ['Digit1', 'Digit2', 'Digit3'],
 };
@@ -59,6 +62,7 @@ export class KeyboardMouseInput implements InputSource {
    */
   private readonly lastTap = new Map<string, number>();
   private readonly dashing = new Set<string>();
+  private queuedDash = false;
   private disposers: Array<() => void> = [];
 
   constructor(
@@ -102,8 +106,21 @@ export class KeyboardMouseInput implements InputSource {
       // Either gesture boosts: the modifier still works for anyone who
       // prefers it, and a double tap is there for anyone who does not.
       boost: this.anyHeld(this.bindings.boost) || this.dashing.size > 0,
+      dash: this.takeDash(),
       useItem: this.takeQueuedItem(),
     };
+  }
+
+  /**
+   * True once per dash gesture, cleared when read.
+   *
+   * Latched the same way an item press is, so the impulse lands exactly once
+   * however the key press lines up with the fixed tick.
+   */
+  private takeDash(): boolean {
+    const queued = this.queuedDash;
+    this.queuedDash = false;
+    return queued;
   }
 
   private takeQueuedItem(): number {
@@ -129,6 +146,7 @@ export class KeyboardMouseInput implements InputSource {
     const previous = this.lastTap.get(code);
     if (previous !== undefined && now - previous <= this.config.input.doubleTapWindow) {
       this.dashing.add(code);
+      this.queuedDash = true;
       // Consumed, so a third tap has to start a fresh pair rather than
       // re-triggering off the same timestamp.
       this.lastTap.delete(code);
@@ -153,6 +171,9 @@ export class KeyboardMouseInput implements InputSource {
         if (slot >= 0) this.queuedItem = slot;
         this.noteTap(e.code);
       }
+      if (!this.held.has(e.code) && this.bindings.boost.includes(e.code)) {
+        this.queuedDash = true;
+      }
       this.held.add(e.code);
       // Space and Ctrl would otherwise scroll the page or open browser menus.
       if (e.code === 'Space' || e.code.startsWith('Control')) e.preventDefault();
@@ -167,6 +188,7 @@ export class KeyboardMouseInput implements InputSource {
       this.held.clear();
       this.dashing.clear();
       this.lastTap.clear();
+      this.queuedDash = false;
       this.firing = false;
       this.queuedItem = NO_ITEM;
     };
