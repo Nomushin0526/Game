@@ -88,7 +88,8 @@ export function stepFlight(
   const boosted = entity.boosting ? loadout.boostMultiplier : 1;
   const maxSpeed = loadout.cruiseSpeed * boosted * tempo(entity, config);
   const target = scale(wish, maxSpeed);
-  const accel = entity.boosting ? flight.accel + flight.boostAccel : flight.accel;
+  const agility = loadout.accel;
+  const accel = entity.boosting ? agility + flight.boostAccel : agility;
   const rate = wishStrength > 0 ? accel : flight.decel;
 
   const delta = { x: target.x - entity.vel.x, y: target.y - entity.vel.y, z: target.z - entity.vel.z };

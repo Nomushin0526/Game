@@ -56,6 +56,17 @@ export interface LoadoutConfig {
   projectileSpeed: number;
   /** Level-flight speed in m/s. */
   cruiseSpeed: number;
+  /**
+   * Acceleration towards the requested velocity, m/s^2 — per side, because
+   * this is agility, and agility is not symmetric in a chase.
+   *
+   * Measured: the pursuer only has to point at the target, while the evader
+   * has to change course faster than the pursuer can follow. Cutting it for
+   * both sides took the hunter from 77% to 98% in a no-gun test, so this is
+   * the evader's dial, not a shared one. `flight.accel` is the fallback for
+   * anything that does not set it.
+   */
+  accel: number;
   /** Speed multiplier while boosting. */
   boostMultiplier: number;
   /** Gauge units drained per second of boost. */
@@ -190,7 +201,7 @@ export interface WeaponConfig {
 export interface FlightConfig {
   /** Collision radius of a craft, metres. */
   bodyRadius: number;
-  /** Acceleration towards the requested velocity, m/s^2. */
+  /** Default acceleration, m/s^2. A loadout's own `accel` overrides it. */
   accel: number;
   /** Deceleration when the stick is released, m/s^2. */
   decel: number;
@@ -531,6 +542,7 @@ export const CONFIG: SkyTagConfig = {
       range: 130,
       projectileSpeed: 95,
       cruiseSpeed: 25,
+      accel: 45,
       boostMultiplier: 1.95,
       boostDrain: 32,
       boostRegen: 14,
@@ -547,6 +559,7 @@ export const CONFIG: SkyTagConfig = {
       range: 110,
       projectileSpeed: 85,
       cruiseSpeed: 22,
+      accel: 45,
       boostMultiplier: 1.85,
       boostDrain: 26,
       boostRegen: 19,
