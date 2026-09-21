@@ -327,3 +327,68 @@ describe('bolts in flight', () => {
     expect(t.hp).toBe(CONFIG.loadout.runner.maxHp);
   });
 });
+
+describe('ammunition', () => {
+  it('starts each craft with its loadout\'s bolts', () => {
+    expect(shooter({ x: 0, y: 60, z: 0 }, 'hunter').ammo).toBe(CONFIG.loadout.hunter.ammo);
+    expect(shooter({ x: 0, y: 60, z: 0 }, 'runner').ammo).toBe(CONFIG.loadout.runner.ammo);
+  });
+
+  it('spends one bolt per shot and stops firing when empty', () => {
+    // Small magazine, no heat limit, so this measures ammunition alone.
+    const config = cloneConfig();
+    config.loadout.hunter.ammo = 5;
+    config.loadout.hunter.heatCapacity = 1000;
+    const range = new Range(config);
+    const s = shooter({ x: -150, y: 60, z: 200 }, 'hunter', config);
+
+    // Long enough to have fired far more than five times.
+    const events = range.run(s, [], config.loadout.hunter.fireInterval * 20);
+    expect(fires(events)).toHaveLength(5);
+    expect(s.ammo).toBe(0);
+    expect(s.shotsFired).toBe(5);
+
+    // And it stays empty: there is no reload.
+    expect(fires(range.run(s, [], 2))).toHaveLength(0);
+  });
+
+  it('is separate from heat: a dry gun never overheats', () => {
+    // Heat caps the rate of fire and recovers; ammunition caps the round's
+    // total and does not. Running dry must not leave the gun locked out.
+    const config = cloneConfig();
+    config.loadout.hunter.ammo = 3;
+    const range = new Range(config);
+    const s = shooter({ x: -150, y: 60, z: 200 }, 'hunter', config);
+
+    range.run(s, [], config.loadout.hunter.fireInterval * 4);
+    expect(s.ammo).toBe(0);
+    expect(s.heat).toBe(3);
+    expect(s.overheated).toBe(false);
+
+    // The heat it did build still bleeds off, it is just of no further use.
+    range.run(s, [], 2);
+    expect(s.heat).toBe(0);
+    expect(s.overheated).toBe(false);
+  });
+
+  it('comes back in full on the next round', async () => {
+    const { World } = await import('../src/sim/world.ts');
+    const { loadMap } = await import('../src/maps/loader.ts');
+    const config = cloneConfig();
+    config.rules.countdown = 0;
+    config.rules.timeLimit = 2;
+    const world = new World({ map: loadMap('city01'), config, seed: 1 });
+    world.skipCountdown();
+
+    const before = world.entityByTeam('hunter')!;
+    world.stepFor(0.5, [{ ...neutralInput(), fire: true }, neutralInput()]);
+    expect(before.ammo).toBeLessThan(config.loadout.hunter.ammo);
+
+    world.stepFor(config.rules.timeLimit + 0.2);
+    world.nextRound();
+    for (const entity of world.entities) {
+      expect(entity.ammo).toBe(config.loadout[entity.team].ammo);
+    }
+    world.dispose();
+  });
+});

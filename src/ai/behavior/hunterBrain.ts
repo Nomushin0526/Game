@@ -33,7 +33,10 @@ const pursue: Action = {
     const closeness = 1 - Math.min(1, ctx.range / 160);
     // Committing hard once inside tag range is what wins rounds.
     const commit = ctx.range < TAG_COMMIT_RANGE ? 0.45 : 0;
-    return 0.35 + closeness * 0.35 + commit + ctx.perception.confidence(ctx.config) * 0.15;
+    // Out of bolts, the tag is the only ending the hunter can still reach, so
+    // it stops looking for a firing position and just chases.
+    const dry = ctx.self.ammo <= 0 ? 0.5 : 0;
+    return 0.35 + closeness * 0.35 + commit + dry + ctx.perception.confidence(ctx.config) * 0.15;
   },
   act(ctx): Intent {
     const target = bestGuess(ctx);
@@ -45,7 +48,9 @@ const pursue: Action = {
       lookAt: shootAt,
       // Firing while closing is free: the tag is the real threat.
       fire: ctx.perception.acquired && canShoot(ctx, shootAt),
-      boost: ctx.range > 18,
+      // A dry hunter has to actually arrive, so it keeps the boost on right
+      // up to contact rather than easing off at the usual stand-off distance.
+      boost: ctx.range > 18 || ctx.self.ammo <= 0,
     };
   },
 };
@@ -55,6 +60,9 @@ const duel: Action = {
   name: 'duel',
   score(ctx) {
     if (!ctx.perception.acquired || !ctx.enemy) return 0;
+    // Holding a firing distance with nothing to fire is just letting the clock
+    // run, which the hunter loses.
+    if (ctx.self.ammo <= 0) return 0;
     // Best when already near the preferred range and healthy enough to trade.
     const band = 1 - Math.min(1, Math.abs(ctx.range - ctx.tuning.preferredRange) / 70);
     const health = ctx.self.hp / ctx.config.loadout[ctx.self.team].maxHp;

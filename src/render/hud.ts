@@ -43,6 +43,7 @@ export class Hud {
   private readonly enemyHp: Bar;
   private readonly boost: Bar;
   private readonly heat: Bar;
+  private readonly ammo: Bar;
   private readonly radar: HTMLDivElement;
   /** One dot per painted contact, real or fake; pooled across frames. */
   private readonly blips: HTMLDivElement[] = [];
@@ -74,7 +75,8 @@ export class Hud {
     this.selfHp = new Bar('hud-bar-hp', 'HP');
     this.boost = new Bar('hud-bar-boost', 'BST');
     this.heat = new Bar('hud-bar-heat', 'HEAT');
-    bottom.append(this.role, this.selfHp.root, this.boost.root, this.heat.root);
+    this.ammo = new Bar('hud-bar-ammo', 'AMMO');
+    bottom.append(this.role, this.selfHp.root, this.boost.root, this.heat.root, this.ammo.root);
 
     this.items = el('div', 'hud-items');
     bottom.append(this.items);
@@ -118,6 +120,10 @@ export class Hud {
     this.boost.set(self.boostFuel / this.config.flight.boostCapacity, self.boosting ? 'BOOST' : '');
     this.heat.set(self.heat / loadout.heatCapacity, self.overheated ? 'OVERHEAT' : '');
     this.heat.root.classList.toggle('overheated', self.overheated);
+    // Heat says how fast you may shoot; this says how much shooting is left in
+    // the round at all. Empty, the tag is the only ending still open.
+    this.ammo.set(self.ammo / loadout.ammo, self.ammo > 0 ? `${self.ammo}` : 'DRY');
+    this.ammo.root.classList.toggle('dry', self.ammo <= 0);
 
     this.updateItems(self.items);
     // A flash whites the pane out and fades; the sim decides how long.

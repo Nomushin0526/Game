@@ -1,5 +1,5 @@
 /**
- * The beam gun: trigger, heat management, and putting bolts in the air.
+ * The beam gun: trigger, heat and ammunition, and putting bolts in the air.
  *
  * Firing spawns a projectile rather than resolving a hit immediately. Whether
  * it connects is decided later, in `projectile.ts`, once the bolt has flown —
@@ -61,6 +61,7 @@ export function stepWeapon(
   shooter.fireCooldown = loadout.fireInterval;
   shooter.sinceLastShot = 0;
   shooter.shotsFired++;
+  shooter.ammo--;
   shooter.heat = Math.min(loadout.heatCapacity, shooter.heat + 1);
   if (shooter.heat >= loadout.heatCapacity) {
     shooter.overheated = true;
@@ -78,7 +79,8 @@ function canFire(shooter: EntityState, input: PlayerInput, ctx: WeaponContext): 
     ctx.controlEnabled &&
     shooter.alive &&
     shooter.stunTimer <= 0 &&
-    shooter.fireCooldown <= 0
+    shooter.fireCooldown <= 0 &&
+    shooter.ammo > 0
   );
 }
 

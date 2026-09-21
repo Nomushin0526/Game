@@ -78,6 +78,8 @@ export interface EntityState {
   cooldownRemaining: number;
   /** Seconds until the next shot is allowed. */
   fireCooldown: number;
+  /** Bolts left for the round. At zero the gun is dry until the next round. */
+  ammo: number;
   /** Seconds since the last shot, which gates heat decay. */
   sinceLastShot: number;
   /** Seconds of remaining damage immunity after being hit. */

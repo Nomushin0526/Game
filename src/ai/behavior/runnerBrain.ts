@@ -126,7 +126,7 @@ const hide: Action = {
 const fight: Action = {
   name: 'fight',
   score(ctx) {
-    if (!ctx.perception.acquired || !ctx.enemy) return 0;
+    if (!ctx.perception.acquired || !ctx.enemy || ctx.self.ammo <= 0) return 0;
     const enemyHealth = ctx.enemy.hp / ctx.config.loadout[ctx.enemy.team].maxHp;
     const ownHealth = ctx.self.hp / ctx.config.loadout[ctx.self.team].maxHp;
     // A knockout ends the round in the runner's favour immediately, so a nearly
@@ -152,7 +152,9 @@ const fight: Action = {
 const kite: Action = {
   name: 'kite',
   score(ctx) {
-    if (!ctx.perception.acquired || !ctx.enemy) return 0;
+    // Retreating while shooting is only worth choosing while there is
+    // something to shoot; dry, this is `hide` with extra steps.
+    if (!ctx.perception.acquired || !ctx.enemy || ctx.self.ammo <= 0) return 0;
     if (ctx.range < PANIC_RANGE) return 0;
     // Only worth it inside its own weapon range. Beyond that it would be
     // retreating without being able to shoot, which is just `hide` with the

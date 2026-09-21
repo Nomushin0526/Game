@@ -26,6 +26,16 @@ export interface LoadoutConfig {
   fireInterval: number;
   /** Shots fired before the gun overheats. */
   heatCapacity: number;
+  /**
+   * Bolts carried for the whole round. Not a magazine -- there is no reload.
+   *
+   * Heat caps how fast you may shoot; this caps how much shooting the round
+   * contains at all. It exists to put the tag back on the table: a hunter that
+   * can always shoot never has a reason to close to `rules.touchRadius`, and
+   * measurement bore that out (tag decided 5-7% of rounds). A dry gun leaves
+   * only the two endings the game is named after.
+   */
+  ammo: number;
   /** Seconds of forced cool-down once overheated. */
   cooldownTime: number;
   /** Maximum distance a bolt travels before it fizzles out, metres. */
@@ -433,7 +443,11 @@ export const CONFIG: SkyTagConfig = {
     // DESIGN.md section 10: the hunter has two win conditions, so the runner
     // takes the clock. Flip to 'draw' to play the original rule set.
     timeoutWinner: 'runner',
-    touchRadius: 1.8,
+    // DESIGN.md asks for 1.8, which is about one body width: two craft have to
+    // very nearly overlap. Measured, that made the tag unreachable — it
+    // decided 5% of rounds. At 4 m it is a real target without being a free
+    // one, and (with ammunition capped) it moved tag wins to 20-48%.
+    touchRadius: 4,
     roundsToWin: 2,
     swapSidesEachRound: true,
     countdown: 3,
@@ -513,6 +527,7 @@ export const CONFIG: SkyTagConfig = {
       fireInterval: 0.18,
       heatCapacity: 20,
       cooldownTime: 3,
+      ammo: 32,
       range: 130,
       projectileSpeed: 95,
       cruiseSpeed: 25,
@@ -528,6 +543,7 @@ export const CONFIG: SkyTagConfig = {
       fireInterval: 0.22,
       heatCapacity: 20,
       cooldownTime: 3,
+      ammo: 28,
       range: 110,
       projectileSpeed: 85,
       cruiseSpeed: 22,

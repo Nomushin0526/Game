@@ -111,6 +111,12 @@ interface Tally {
   blindings: number;
   /** Times a craft was caught by a snare. */
   snarings: number;
+  /** Rounds that ended with each side's gun already empty. */
+  hunterDry: number;
+  runnerDry: number;
+  /** Bolts left unspent at the end, to tell "tight" from "never mattered". */
+  hunterAmmoLeft: number;
+  runnerAmmoLeft: number;
 }
 
 function emptyTally(): Tally {
@@ -129,6 +135,10 @@ function emptyTally(): Tally {
     decoysPopped: 0,
     blindings: 0,
     snarings: 0,
+    hunterDry: 0,
+    runnerDry: 0,
+    hunterAmmoLeft: 0,
+    runnerAmmoLeft: 0,
   };
 }
 
@@ -217,8 +227,18 @@ function playRound(
 
   const hunter = world.entities.find((e) => e.team === 'hunter');
   const runner = world.entities.find((e) => e.team === 'runner');
-  if (hunter) { tally.hunterShots += hunter.shotsFired; tally.hunterHits += hunter.shotsHit; }
-  if (runner) { tally.runnerShots += runner.shotsFired; tally.runnerHits += runner.shotsHit; }
+  if (hunter) {
+    tally.hunterShots += hunter.shotsFired;
+    tally.hunterHits += hunter.shotsHit;
+    tally.hunterAmmoLeft += hunter.ammo;
+    if (hunter.ammo <= 0) tally.hunterDry++;
+  }
+  if (runner) {
+    tally.runnerShots += runner.shotsFired;
+    tally.runnerHits += runner.shotsHit;
+    tally.runnerAmmoLeft += runner.ammo;
+    if (runner.ammo <= 0) tally.runnerDry++;
+  }
   tally.totalSeconds += ticks * dt;
 
   const result = world.match.lastResult;
@@ -230,6 +250,22 @@ function playRound(
   if (result.winnerTeam === 'hunter') tally.hunterWins++;
   else if (result.winnerTeam === 'runner') tally.runnerWins++;
   else tally.draws++;
+}
+
+/**
+ * How much of the ammunition the round actually consumed.
+ *
+ * "Ran dry" is the number that matters: a cap nobody reaches is not a cap, and
+ * a cap everybody reaches in the first minute is a different game.
+ */
+function ammoLine(tally: Tally, rounds: number): string {
+  const n = Math.max(rounds, 1);
+  const pct = (x: number): string => `${((x / n) * 100).toFixed(0)}%`;
+  const avg = (x: number): string => (x / n).toFixed(0);
+  return (
+    `ran dry       hunter ${pct(tally.hunterDry)}  runner ${pct(tally.runnerDry)}  ` +
+    `| bolts left/round  hunter ${avg(tally.hunterAmmoLeft)}  runner ${avg(tally.runnerAmmoLeft)}`
+  );
 }
 
 /** Per-round item usage, so a kit can be tuned on how much it actually gets used. */
@@ -272,6 +308,7 @@ function report(args: Args, tally: Tally, elapsedMs: number): void {
     `avg round     ${(tally.totalSeconds / Math.max(args.matches, 1)).toFixed(1)}s`,
     `accuracy      hunter ${accuracy(tally.hunterHits, tally.hunterShots)}  ` +
       `runner ${accuracy(tally.runnerHits, tally.runnerShots)}`,
+    ammoLine(tally, args.matches),
     itemLine(tally, args.matches),
     tally.unresolved > 0 ? `unresolved    ${tally.unresolved} (hit the tick cap)` : '',
     `simulated in  ${(elapsedMs / 1000).toFixed(1)}s`,
