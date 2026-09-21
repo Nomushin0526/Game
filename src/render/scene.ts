@@ -27,11 +27,30 @@ export const TEAM_COLORS: Record<Team, number> = {
 };
 
 const SKY_COLOR = 0x9fc4e8;
+/** Above this the ground marker fades out entirely, metres. */
+const SHADOW_MAX_ALTITUDE = 90;
+/** Hard limit on the visual lean into a turn, radians. */
+const MAX_BANK = 0.55;
 
 export class SceneRenderer {
   readonly scene = new THREE.Scene();
   readonly renderer: THREE.WebGLRenderer;
   private readonly craft = new Map<number, THREE.Object3D>();
+  /**
+   * A disc on the ground under each craft, and the line down to it.
+   *
+   * Playtesting reported that height was hard to judge and that this made
+   * craft catch on obstacles. That is the classic weakness of a chase view:
+   * with nothing connecting a flying object to the ground, the eye has no
+   * reference for how high it is. A shadow and a drop line give it one, and
+   * they cost nothing because the terrain height is already sampled here.
+   */
+  private readonly shadows = new Map<number, THREE.Object3D>();
+  /** Sampled for the shadow's height. Null on a map with a flat floor. */
+  private groundHeight: ((x: number, z: number) => number) | null = null;
+  private floor = 0;
+  /** Smoothed roll per craft, for the visual bank into a turn. */
+  private readonly bank = new Map<number, { roll: number; yaw: number }>();
   private readonly decoys = new Map<number, THREE.Object3D>();
   private readonly shields = new Map<number, THREE.Mesh>();
 
@@ -46,6 +65,8 @@ export class SceneRenderer {
     this.scene.fog = new THREE.Fog(SKY_COLOR, 180, 620);
 
     this.addLights();
+    this.groundHeight = map.terrain ? (x, z) => map.terrain!.heightAt(x, z) : null;
+    this.floor = map.floor;
     this.addGround(map);
     this.addSolids(map);
     this.addClouds(map);
@@ -210,14 +231,75 @@ export class SceneRenderer {
         lerp(from.y, entity.pos.y, alpha),
         lerp(from.z, entity.pos.z, alpha),
       );
-      // The hull points where the pilot is aiming.
+      // The hull points where the pilot is aiming, and leans into the turn.
+      // Rolling the camera alone looks like the world tilting around a rigid
+      // craft; rolling the hull too is what reads as the craft doing it.
       mesh.rotation.set(0, 0, 0);
       mesh.rotateY(entity.aimYaw);
       mesh.rotateX(-entity.aimPitch);
-      mesh.visible = entity.alive;
+      mesh.rotateZ(this.trackBank(entity));
+      mesh.visible = entity.alive && mesh.userData.hidden !== true;
 
       this.syncShield(entity, mesh.position);
+      this.syncShadow(entity, mesh.position);
     }
+  }
+
+  /**
+   * How far this craft is leaning, from how fast its heading is changing.
+   *
+   * Rendering-only, and kept here rather than in the simulation because a
+   * roll that fed back into flight would change the hit box and the physics
+   * for something that is purely a cue. Smoothed so it leans in and settles
+   * rather than snapping with every twitch of the mouse.
+   */
+  private trackBank(entity: EntityState): number {
+    const previous = this.bank.get(entity.id);
+    if (!previous) {
+      this.bank.set(entity.id, { roll: 0, yaw: entity.aimYaw });
+      return 0;
+    }
+
+    let delta = entity.aimYaw - previous.yaw;
+    while (delta > Math.PI) delta -= Math.PI * 2;
+    while (delta < -Math.PI) delta += Math.PI * 2;
+    previous.yaw = entity.aimYaw;
+
+    // Smoothed per rendered frame rather than by elapsed time: bank is a cue,
+    // not a simulated quantity, and being exactly frame-rate independent here
+    // would buy nothing anyone could see.
+    const wanted = Math.max(-1, Math.min(1, delta * 12)) * MAX_BANK;
+    previous.roll += (wanted - previous.roll) * 0.12;
+    return previous.roll;
+  }
+
+  /** Put the ground marker under a craft, sized by how far up it is. */
+  private syncShadow(entity: EntityState, at: THREE.Vector3): void {
+    let marker = this.shadows.get(entity.id);
+    if (!marker) {
+      marker = makeShadow(TEAM_COLORS[entity.team]);
+      this.shadows.set(entity.id, marker);
+      this.scene.add(marker);
+    }
+
+    const ground = this.groundHeight?.(at.x, at.z) ?? this.floor;
+    const altitude = Math.max(0, at.y - ground);
+    marker.position.set(at.x, ground + 0.4, at.z);
+    marker.visible = entity.alive && altitude < SHADOW_MAX_ALTITUDE;
+
+    // Higher up means a wider, fainter mark, which is the cue itself: the
+    // rate it shrinks as you descend is what reads as closing on the ground.
+    const spread = 1 + (altitude / SHADOW_MAX_ALTITUDE) * 2.4;
+    marker.scale.set(spread, 1, spread);
+    const [disc, line] = marker.children as [THREE.Mesh, THREE.Mesh];
+    (disc.material as THREE.MeshBasicMaterial).opacity =
+      0.42 * (1 - altitude / SHADOW_MAX_ALTITUDE);
+
+    // The drop line is what makes the height readable as a distance rather
+    // than just a blob that happens to be under you. The disc is scaled with
+    // the group, so the line is un-scaled to keep it thin.
+    line.scale.set(1 / spread, Math.max(0.001, altitude), 1 / spread);
+    line.position.y = altitude / 2;
   }
 
   /**
@@ -312,10 +394,16 @@ export class SceneRenderer {
     this.renderer.setSize(width, height, false);
   }
 
-  /** Hide a craft's own hull, e.g. so it does not fill its own chase view. */
+  /**
+   * Hide a craft's own hull, e.g. so it does not fill its own cockpit view.
+   *
+   * Recorded on the mesh rather than applied directly, because `syncEntities`
+   * rewrites `visible` from the entity's own state every frame and would
+   * undo it.
+   */
   setCraftVisible(id: number, visible: boolean): void {
     const mesh = this.craft.get(id);
-    if (mesh) mesh.visible = visible;
+    if (mesh) mesh.userData.hidden = !visible;
   }
 
   /** Forget the craft meshes so a new round rebuilds them. */
@@ -337,6 +425,37 @@ function geometryFor(solid: Solid): THREE.BufferGeometry {
   return solid.shape === 'box'
     ? new THREE.BoxGeometry(solid.size.x, solid.size.y, solid.size.z)
     : new THREE.CylinderGeometry(solid.radius, solid.radius, solid.height, 20);
+}
+
+/**
+ * The ground marker: a flat ring plus the line down to it.
+ *
+ * Drawn in the craft's own colour so a split screen stays readable, and with
+ * `depthWrite` off so it never z-fights the terrain it is lying on.
+ */
+function makeShadow(color: number): THREE.Object3D {
+  const group = new THREE.Group();
+
+  const disc = new THREE.Mesh(
+    new THREE.RingGeometry(1.6, 2.6, 20),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.4,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  disc.rotation.x = -Math.PI / 2;
+
+  // Unit height, scaled per frame to the craft's altitude.
+  const line = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.12, 0.12, 1, 5),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.18, depthWrite: false }),
+  );
+
+  group.add(disc, line);
+  return group;
 }
 
 /** Placeholder craft: a cone hull with stubby wings. Art comes later. */

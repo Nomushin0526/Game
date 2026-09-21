@@ -184,7 +184,8 @@ export function showMatchResult(
 
 function controlsText(): string {
   return (
-    'KB+マウス: WASD 移動 / Space 上昇 / Ctrl 下降 / Shift ブースト / 左クリック 射撃 / 1・2・3 アイテム — ' +
+    'KB+マウス: WASD 移動 / Space 上昇 / Ctrl 下降 / Shift または方向キー2回連打 でダッシュ / ' +
+    '左クリック 射撃 / 1・2・3 アイテム / V 視点切替（三人称⇄一人称） — ' +
     'ゲームパッド: 左スティック 移動 / RB 上昇 / LB 下降 / 右スティック 視点 / RT 射撃 / LT ブースト / A・B・X アイテム'
   );
 }

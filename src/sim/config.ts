@@ -273,8 +273,24 @@ export interface RulesConfig {
 }
 
 export interface InputConfig {
-  /** Mouse radians per pixel of movement. */
+  /**
+   * Mouse radians per pixel of movement.
+   *
+   * Started at 0.0022, which needs about 1,430 px of mouse travel to turn
+   * around — three swipes of a pad, where a shooter usually wants 400-600 px.
+   * Playtesting called this out as "cannot make sharp turns", and it was the
+   * single most mechanical of the complaints: at that rate a hard turn is a
+   * physical act, so nobody attempts one, so nothing feels fast.
+   */
   mouseSensitivity: number;
+  /**
+   * Seconds within which a second tap of a movement key means "dash".
+   *
+   * Holding a modifier for boost works but occupies a finger that a flight
+   * game wants for something else, and it separates "go fast" from "go this
+   * way" when they are the same intention.
+   */
+  doubleTapWindow: number;
   /** Gamepad stick radians per second at full deflection. */
   stickSensitivity: number;
   gamepadDeadzone: number;
@@ -559,7 +575,8 @@ export const CONFIG: SkyTagConfig = {
     showEnemyHp: true,
   },
   input: {
-    mouseSensitivity: 0.0022,
+    mouseSensitivity: 0.0052,
+    doubleTapWindow: 0.28,
     stickSensitivity: 2.8,
     gamepadDeadzone: 0.15,
     aimAssistEnabled: true,
@@ -580,7 +597,7 @@ export const CONFIG: SkyTagConfig = {
       fireInterval: 0.18,
       heatCapacity: 20,
       cooldownTime: 3,
-      ammo: 32,
+      ammo: 60,
       range: 130,
       projectileSpeed: 95,
       cruiseSpeed: 25,
@@ -597,7 +614,7 @@ export const CONFIG: SkyTagConfig = {
       fireInterval: 0.22,
       heatCapacity: 20,
       cooldownTime: 3,
-      ammo: 28,
+      ammo: 52,
       range: 110,
       projectileSpeed: 85,
       cruiseSpeed: 22,

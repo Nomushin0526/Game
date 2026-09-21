@@ -50,6 +50,15 @@ export class KeyboardMouseInput implements InputSource {
    * charge no matter how the key press lines up with the fixed tick.
    */
   private queuedItem = NO_ITEM;
+  /**
+   * Movement keys double-tapped into a dash, and when the tap happened.
+   *
+   * Boost stays on while the key is held after the second tap, so a dash is
+   * "tap tap and keep going" rather than a fixed-length lunge. Releasing the
+   * key ends it, which makes stopping a dash the same gesture as stopping.
+   */
+  private readonly lastTap = new Map<string, number>();
+  private readonly dashing = new Set<string>();
   private disposers: Array<() => void> = [];
 
   constructor(
@@ -90,7 +99,9 @@ export class KeyboardMouseInput implements InputSource {
       aimYaw: this.yaw,
       aimPitch: this.pitch,
       fire: this.firing,
-      boost: this.anyHeld(this.bindings.boost),
+      // Either gesture boosts: the modifier still works for anyone who
+      // prefers it, and a double tap is there for anyone who does not.
+      boost: this.anyHeld(this.bindings.boost) || this.dashing.size > 0,
       useItem: this.takeQueuedItem(),
     };
   }
@@ -111,6 +122,28 @@ export class KeyboardMouseInput implements InputSource {
     return codes.some((code) => this.held.has(code));
   }
 
+  /** Second press of a movement key inside the window starts a dash. */
+  private noteTap(code: string): void {
+    if (!this.isMovementKey(code)) return;
+    const now = performance.now() / 1000;
+    const previous = this.lastTap.get(code);
+    if (previous !== undefined && now - previous <= this.config.input.doubleTapWindow) {
+      this.dashing.add(code);
+      // Consumed, so a third tap has to start a fresh pair rather than
+      // re-triggering off the same timestamp.
+      this.lastTap.delete(code);
+      return;
+    }
+    this.lastTap.set(code, now);
+  }
+
+  private isMovementKey(code: string): boolean {
+    const b = this.bindings;
+    return [b.forward, b.back, b.left, b.right, b.up, b.down].some((codes) =>
+      codes.includes(code),
+    );
+  }
+
   private attach(): void {
     const onKeyDown = (e: KeyboardEvent): void => {
       // Latch on the transition, not while held: repeat events would otherwise
@@ -118,15 +151,22 @@ export class KeyboardMouseInput implements InputSource {
       if (!this.held.has(e.code)) {
         const slot = this.bindings.items.indexOf(e.code);
         if (slot >= 0) this.queuedItem = slot;
+        this.noteTap(e.code);
       }
       this.held.add(e.code);
       // Space and Ctrl would otherwise scroll the page or open browser menus.
       if (e.code === 'Space' || e.code.startsWith('Control')) e.preventDefault();
     };
-    const onKeyUp = (e: KeyboardEvent): void => void this.held.delete(e.code);
+    const onKeyUp = (e: KeyboardEvent): void => {
+      this.held.delete(e.code);
+      // A dash lasts as long as you keep flying that way.
+      this.dashing.delete(e.code);
+    };
     // Losing focus mid-flight must not leave a key stuck down.
     const onBlur = (): void => {
       this.held.clear();
+      this.dashing.clear();
+      this.lastTap.clear();
       this.firing = false;
       this.queuedItem = NO_ITEM;
     };

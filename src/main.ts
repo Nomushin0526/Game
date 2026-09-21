@@ -121,6 +121,14 @@ async function runMatch(
   const onClick = (): void => keyboard?.requestPointerLock();
   canvas.addEventListener('click', onClick);
 
+  // View toggle. Held on the camera rather than the input source because it
+  // is a view concern and must not reach the simulation.
+  const onViewKey = (e: KeyboardEvent): void => {
+    if (e.code !== 'KeyV') return;
+    for (const player of players) player.camera.toggleMode();
+  };
+  window.addEventListener('keydown', onViewKey);
+
   const fixedDt = world.config.sim.fixedDt;
   let previousPositions = new Map<number, Vec3>();
   let accumulator = 0;
@@ -202,6 +210,8 @@ async function runMatch(
     player.source.dispose();
     player.hud.dispose();
   }
+  window.removeEventListener('keydown', onViewKey);
+  canvas.removeEventListener('click', onClick);
   renderer.dispose();
   world.dispose();
   return outcome;
@@ -310,6 +320,8 @@ function drawPlayers(
       z: from.z + (self.pos.z - from.z) * alpha,
     };
     player.camera.update(self, renderPos, frameTime);
+    // From inside the cockpit, the hull would be the only thing on screen.
+    renderer.setCraftVisible(self.id, player.camera.cameraMode !== 'cockpit');
 
     const viewport = viewportFor(index, players.length, width, height);
     // Three.js measures viewports from the bottom; the HUD from the top.
