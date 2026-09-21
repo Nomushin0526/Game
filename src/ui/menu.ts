@@ -28,7 +28,12 @@ export interface MenuDefaults {
 }
 
 /** Show the title screen and resolve once the player starts a match. */
-export function showMenu(root: HTMLElement, defaults: MenuDefaults): Promise<MatchSetup> {
+export function showMenu(
+  root: HTMLElement,
+  defaults: MenuDefaults,
+  /** Wipes what the CPUs have learned about this player (DESIGN.md 7.2). */
+  forgetPlayer?: () => Promise<void>,
+): Promise<MatchSetup> {
   return new Promise((resolve) => {
     const screen = el('div', 'screen');
     const panel = el('div', 'panel');
@@ -112,7 +117,18 @@ export function showMenu(root: HTMLElement, defaults: MenuDefaults): Promise<Mat
       button('1人で飛ぶ（練習）', '', () => start(read('solo', ['keyboard']))),
     );
 
-    panel.append(buttons, gamepadNote, el('p', 'note', controlsText()));
+    if (forgetPlayer) {
+      const forget = button('CPUの学習データをリセット', '', () => {
+        void forgetPlayer().then(() => {
+          forget.textContent = 'リセットしました';
+          forget.disabled = true;
+        });
+      });
+      panel.append(buttons, el('div', 'buttons', ''), forget);
+    } else {
+      panel.append(buttons);
+    }
+    panel.append(gamepadNote, el('p', 'note', controlsText()));
     screen.append(panel);
     root.append(screen);
   });
@@ -123,6 +139,8 @@ export function showMatchResult(
   root: HTMLElement,
   match: MatchState,
   playerLabels: readonly string[],
+  /** What the CPU has worked out about you, or null when nothing learned. */
+  readOfYou: readonly string[] = [],
 ): Promise<'rematch' | 'menu'> {
   return new Promise((resolve) => {
     const screen = el('div', 'screen');
@@ -139,6 +157,15 @@ export function showMatchResult(
       list.append(el('div', 'result-row', `Round ${index + 1}: ${describeResult(result)}`));
     });
     panel.append(list);
+
+    // DESIGN.md 7.2 asks for this: the learning is only interesting if the
+    // player can see it happening.
+    if (readOfYou.length > 0) {
+      const read = el('div', 'results');
+      read.append(el('div', 'result-row', 'CPUが見ているあなたの癖'));
+      for (const line of readOfYou) read.append(el('div', 'result-row', `  ${line}`));
+      panel.append(read);
+    }
 
     const finish = (choice: 'rematch' | 'menu'): void => {
       screen.remove();

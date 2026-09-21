@@ -12,6 +12,7 @@ import type { AiDifficulty, AiTuning, SkyTagConfig } from '../sim/config.ts';
 import {
   angleDelta,
   clamp,
+  distance,
   dot,
   forwardVector,
   lookAngles,
@@ -30,6 +31,12 @@ import { runnerBrain } from './behavior/runnerBrain.ts';
 import { Navigator } from './nav/navigator.ts';
 import { VoxelGrid } from './nav/voxelGrid.ts';
 import { Perception } from './perception.ts';
+import {
+  classifyDodge,
+  DODGE_WINDOW_SECONDS,
+  LOST_CONTACT_SECONDS,
+  PlayerModel,
+} from './learning/playerModel.ts';
 import { chooseAction, coast, createMemory, type Action, type Brain, type BrainContext, type BrainMemory, type Intent } from './types.ts';
 
 /** Seconds of travel to look ahead when checking for an imminent crash. */
@@ -45,6 +52,14 @@ export interface AiControllerOptions {
   grid?: VoxelGrid;
   /** Seed offset, so two CPUs on one map do not sample identically. */
   seed?: number;
+  /**
+   * What this CPU already knows about its opponent (DESIGN.md 7.2).
+   *
+   * Passed in rather than created here because it outlives the controller: it
+   * is loaded before the match, carried across rounds and side swaps, and
+   * saved afterwards. Omit it and the CPU plays exactly as it did before.
+   */
+  opponentModel?: PlayerModel;
 }
 
 export class AiController implements InputSource {
@@ -61,6 +76,22 @@ export class AiController implements InputSource {
   private readonly perception = new Perception();
   private readonly nav: Navigator;
   private readonly memory: BrainMemory = createMemory();
+  private readonly opponentModel: PlayerModel | null;
+  /**
+   * A shot in flight whose effect on the target is still being judged.
+   *
+   * Holds the target's velocity at the moment of firing and the yaw it was
+   * fired along, so the break can be classified in the shooter's frame — which
+   * is the frame the correction is applied in later.
+   */
+  private pendingDodge: { vel: Vec3; yaw: number; elapsed: number } | null = null;
+  /** Enemy hit count last tick, for attributing a shot to a hit. */
+  private lastEnemyHits = 0;
+  private lastEnemyShots = 0;
+  /** Whether there was contact last tick, so losing it can be detected. */
+  private hadContact = false;
+  /** Seconds since contact ended, so a flicker is not mistaken for a search. */
+  private sinceContact = 0;
 
   private aimYaw = 0;
   private aimPitch = 0;
@@ -82,10 +113,88 @@ export class AiController implements InputSource {
     this.grid = options.grid ?? buildGrid(options.world);
     this.nav = new Navigator(this.grid, this.config);
     this.rng = new Rng((options.seed ?? 0x5c0 + options.slot * 977) >>> 0);
+    this.opponentModel = options.opponentModel ?? null;
 
     const self = options.world.entity(this.slot);
     this.aimYaw = self.aimYaw;
     this.aimPitch = self.aimPitch;
+  }
+
+  /**
+   * Feed the opponent model, from sightings only.
+   *
+   * Gated on `perception.visible` and on not being fooled, which is the whole
+   * integrity of the thing: a model fed the enemy's true position every tick
+   * would let the CPU learn where you hide by watching you through the wall
+   * you are hiding behind. What it cannot see, it does not get to remember.
+   */
+  private learn(self: EntityState, enemy: EntityState | undefined, dt: number): void {
+    const model = this.opponentModel;
+    if (!model || !enemy) return;
+
+    const contact = this.perception.visible && !this.perception.fooled;
+    if (contact !== this.hadContact) {
+      // The pair that search is built on. Both ends come from the sighting
+      // itself, so neither is information the AI was not entitled to. Only a
+      // gap long enough to have flown somewhere counts — see
+      // LOST_CONTACT_SECONDS.
+      if (contact) {
+        if (this.sinceContact >= LOST_CONTACT_SECONDS) model.observeReacquire(enemy.pos);
+      } else {
+        this.sinceContact = 0;
+      }
+      this.hadContact = contact;
+    }
+    if (!contact) this.sinceContact += dt;
+
+    if (!contact) {
+      this.pendingDodge = null;
+      return;
+    }
+
+    model.observe(enemy.pos, dt);
+    this.judgeDodge(self, enemy, model, dt);
+
+    // A shot they took, and whether it landed. Both counters are the sim's, so
+    // this is bookkeeping rather than privileged information.
+    if (enemy.shotsFired > this.lastEnemyShots) {
+      const hit = enemy.shotsHit > this.lastEnemyHits;
+      model.observeShot(distance(self.pos, enemy.pos), hit);
+    }
+    this.lastEnemyShots = enemy.shotsFired;
+    this.lastEnemyHits = enemy.shotsHit;
+
+  }
+
+  /**
+   * Which way they broke in response to being shot at.
+   *
+   * Opened on the tick a shot leaves and closed `DODGE_WINDOW_SECONDS` later,
+   * so what gets recorded is the evasive move rather than the frame-to-frame
+   * jitter of ordinary flight. Only one shot is tracked at a time: a burst
+   * produces one usable sample, not one per bolt, and counting every bolt
+   * would weight a long burst as though it were many separate decisions.
+   */
+  private judgeDodge(
+    self: EntityState,
+    enemy: EntityState,
+    model: PlayerModel,
+    dt: number,
+  ): void {
+    if (this.pendingDodge) {
+      this.pendingDodge.elapsed += dt;
+      if (this.pendingDodge.elapsed >= DODGE_WINDOW_SECONDS) {
+        const swing = sub(enemy.vel, this.pendingDodge.vel);
+        const axis = classifyDodge(swing, rightVector(this.pendingDodge.yaw));
+        if (axis) model.observeDodge(axis);
+        this.pendingDodge = null;
+      }
+      return;
+    }
+    // `sinceLastShot` is zeroed by the gun on the tick it fires.
+    if (self.sinceLastShot < dt) {
+      this.pendingDodge = { vel: { ...enemy.vel }, yaw: this.aimYaw, elapsed: 0 };
+    }
   }
 
   /** The behaviour chosen this tick, for the HUD and the batch tool. */
@@ -119,6 +228,7 @@ export class AiController implements InputSource {
     );
     this.memory.coverCommit = Math.max(0, this.memory.coverCommit - dt);
     this.memory.jinkPhase += dt;
+    this.learn(self, enemy, dt);
 
     const ctx: BrainContext = {
       self,
@@ -131,6 +241,7 @@ export class AiController implements InputSource {
       tuning: this.tuning,
       rng: this.rng,
       memory: this.memory,
+      opponent: this.opponentModel,
       decisionTick: false,
       dt,
       timeRemaining: this.world.match.timeRemaining,
@@ -176,6 +287,11 @@ export class AiController implements InputSource {
     this.pendingItem = NO_ITEM;
     this.aimYaw = self.aimYaw;
     this.aimPitch = self.aimPitch;
+    this.pendingDodge = null;
+    this.lastEnemyShots = 0;
+    this.lastEnemyHits = 0;
+    this.hadContact = false;
+    this.opponentModel?.resetTrail();
   }
 
   private clearDestinations(): void {

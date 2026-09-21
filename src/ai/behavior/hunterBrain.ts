@@ -25,6 +25,29 @@ function bestGuess(ctx: BrainContext): Vec3 {
   return ctx.estimate ?? ctx.perception.lastSeen?.pos ?? sampleArena(ctx);
 }
 
+/**
+ * The haunt worth waiting at, or null.
+ *
+ * Only the nearest one: an ambush is only an ambush if you are set up before
+ * they arrive, and flying across the map to a slightly more popular area
+ * spends the very time the trap was supposed to save.
+ */
+function learnedAmbushSpot(ctx: BrainContext): Vec3 | null {
+  const haunts = ctx.opponent?.haunts(4) ?? [];
+  if (haunts.length === 0) return null;
+
+  let best: Vec3 | null = null;
+  let bestDistance = Infinity;
+  for (const spot of haunts) {
+    const range = distance(ctx.self.pos, spot);
+    if (range < bestDistance) {
+      bestDistance = range;
+      best = spot;
+    }
+  }
+  return best;
+}
+
 /** Chase the enemy down and go for the tag. */
 const pursue: Action = {
   name: 'pursue',
@@ -124,7 +147,9 @@ const ambush: Action = {
     return 0.2 + (1 - health) * 0.35 + timePressure * 0.2;
   },
   act(ctx): Intent {
-    const expected = bestGuess(ctx);
+    // Wait where they usually turn up rather than where they were last seen,
+    // once there is enough of a habit to bet a trap on (DESIGN.md 7.2).
+    const expected = learnedAmbushSpot(ctx) ?? bestGuess(ctx);
     if (!ctx.memory.ambushSpot || (ctx.decisionTick && distance(ctx.self.pos, ctx.memory.ambushSpot) < 8)) {
       ctx.memory.ambushSpot = findCover(ctx, expected, 60)?.pos ?? expected;
     }

@@ -7,6 +7,7 @@ import type { EntityState, Vec3 } from '../sim/types.ts';
 import type { Navigator } from './nav/navigator.ts';
 import type { VoxelGrid } from './nav/voxelGrid.ts';
 import type { Perception } from './perception.ts';
+import type { PlayerModel } from './learning/playerModel.ts';
 
 /**
  * What a brain wants this tick, in world terms.
@@ -78,6 +79,12 @@ export interface BrainContext {
   physics: PhysicsWorld;
   config: SkyTagConfig;
   tuning: AiTuning;
+  /**
+   * What this CPU has learned about its opponent across rounds, or null when
+   * learning is off. Always optional to act on: a fresh model answers "I do
+   * not know" to everything, and behaviours must read the same either way.
+   */
+  opponent: PlayerModel | null;
   rng: Rng;
   memory: BrainMemory;
   /**

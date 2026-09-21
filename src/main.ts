@@ -10,6 +10,8 @@
 import { generateCityMap } from './maps/generator.ts';
 import { loadMap } from './maps/loader.ts';
 import { AiController, buildGrid } from './ai/controller.ts';
+import { areaGridFor, describeModel, PlayerModel } from './ai/learning/playerModel.ts';
+import { defaultModelStore, type ModelKey, type ModelStore } from './ai/learning/storage.ts';
 import type { VoxelGrid } from './ai/nav/voxelGrid.ts';
 import { applyAimAssist } from './input/aimAssist.ts';
 import { firstConnectedGamepad, GamepadInput } from './input/gamepad.ts';
@@ -42,6 +44,9 @@ interface Player {
 async function main(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
   const canvas = document.getElementById('view') as HTMLCanvasElement;
+  // One store for the tab: models are loaded before a match and saved after,
+  // never during, so nothing here runs inside the frame loop.
+  const store = defaultModelStore();
   const uiRoot = document.getElementById('ui') as HTMLElement;
   const hudRoot = document.getElementById('hud') as HTMLElement;
 
@@ -52,10 +57,10 @@ async function main(): Promise<void> {
 
   // menu -> match -> result -> menu, for as long as the tab is open.
   for (;;) {
-    const setup = await showMenu(uiRoot, defaults);
+    const setup = await showMenu(uiRoot, defaults, () => store.clear());
     let outcome: 'rematch' | 'menu' = 'rematch';
     while (outcome === 'rematch') {
-      outcome = await runMatch(canvas, hudRoot, setup);
+      outcome = await runMatch(canvas, hudRoot, setup, store);
     }
   }
 }
@@ -64,13 +69,20 @@ async function runMatch(
   canvas: HTMLCanvasElement,
   hudRoot: HTMLElement,
   setup: MatchSetup,
+  store: ModelStore,
 ): Promise<'rematch' | 'menu'> {
   const map = setup.mapId === 'generated' ? generateCityMap(setup.seed) : loadMap(setup.mapId);
   const world = await World.create({ map, seed: setup.seed, slots: setup.devices.length });
 
+  // What the CPUs remember about the human they are about to play (DESIGN.md
+  // 7.2). Loaded before the match starts so it is ready for round one, and
+  // saved once at the end rather than per round.
+  const modelKey: ModelKey = { mapId: map.id, playerId: 'local' };
+  const learned = PlayerModel.fromData(areaGridFor(map), await store.load(modelKey));
+
   const renderer = new SceneRenderer(canvas, map);
   const effects = new Effects(renderer.scene, (id) => TEAM_COLORS[world.entity(id).team]);
-  const allPlayers = createPlayers(setup, world, canvas, hudRoot);
+  const allPlayers = createPlayers(setup, world, canvas, hudRoot, learned);
   // Only human slots get a viewport. Watching two CPUs still needs one camera,
   // so fall back to the first slot when nobody is human.
   const humans = allPlayers.filter((p) => !p.isCpu);
@@ -114,6 +126,7 @@ async function runMatch(
         document.getElementById('ui') as HTMLElement,
         world.match,
         players.map((p) => p.label),
+        learnedThisMatch(setup) ? describeModel(learned) : [],
       );
       resolve(choice);
     };
@@ -146,6 +159,8 @@ async function runMatch(
         if (intermission >= world.config.rules.roundIntermission) {
           intermission = 0;
           effects.clear();
+          // A round is the unit the model's decay is defined over.
+          learned.endRound();
           world.nextRound();
           for (const player of allPlayers) {
             player.camera.reset();
@@ -171,7 +186,19 @@ async function runMatch(
   }
   renderer.dispose();
   world.dispose();
+  // Only worth keeping when a CPU was actually watching a human play.
+  if (learnedThisMatch(setup)) await store.save(modelKey, learned.toData());
   return outcome;
+}
+
+/**
+ * Whether anything in this match was worth learning from.
+ *
+ * A CPU-versus-CPU match teaches the model about a CPU, and saving that under
+ * the local player's key would poison what it knows about the human.
+ */
+function learnedThisMatch(setup: MatchSetup): boolean {
+  return setup.devices.includes('cpu') && setup.devices.some((d) => d !== 'cpu');
 }
 
 function createPlayers(
@@ -179,6 +206,7 @@ function createPlayers(
   world: World,
   canvas: HTMLCanvasElement,
   hudRoot: HTMLElement,
+  learned: PlayerModel,
 ): Player[] {
   const usedPads: number[] = [];
   // Voxelising the map takes a few milliseconds, so every CPU on it shares one.
@@ -198,6 +226,7 @@ function createPlayers(
         difficulty: setup.difficulty,
         grid,
         seed: setup.seed * 7919 + slot * 104729,
+        opponentModel: learned,
       });
       isCpu = true;
     } else if (device === 'gamepad') {

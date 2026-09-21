@@ -331,6 +331,16 @@ export interface AiConfig {
   maxPathNodes: number;
   /** Sideways amplitude of evasive weaving under fire, metres. */
   jinkAmplitude: number;
+  /**
+   * How lopsided the weave is, -1 (always breaks left) to 1 (always right).
+   *
+   * Zero is a pure sine, which is unbiased by construction and therefore has
+   * no habit for phase 5's player model to find — measured, a CPU runner's
+   * dodge lean came out at 0.03. Human players are not symmetric, so this
+   * exists to give a CPU a comparable tell, and to make the learning testable
+   * against an opponent that actually has one.
+   */
+  jinkBias: number;
   /** Weave cycles per second. Too fast and the craft makes no headway. */
   jinkRate: number;
   difficulty: Record<AiDifficulty, AiTuning>;
@@ -511,6 +521,7 @@ export const CONFIG: SkyTagConfig = {
     maxPathNodes: 8000,
     jinkAmplitude: 26,
     jinkRate: 0.85,
+    jinkBias: 0,
     difficulty: {
       easy: {
         reactionTime: 0.6,

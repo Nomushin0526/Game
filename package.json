@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "空中鬼ごっこ (Sky Tag) - 3D aerial tag shooter",
+  "description": "\u7a7a\u4e2d\u9b3c\u3054\u3063\u3053 (Sky Tag) - 3D aerial tag shooter",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "sim:headless": "tsx tools/simHeadless.ts",
-    "sim:batch": "tsx tools/simBatch.ts"
+    "sim:batch": "tsx tools/simBatch.ts",
+    "sim:learn": "tsx tools/learnBench.ts"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.14.0",

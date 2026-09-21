@@ -7,7 +7,8 @@
  */
 
 import type { AiTuning, SkyTagConfig } from '../sim/config.ts';
-import { add, distance, dot, forwardVector, normalize, scale, sub } from '../sim/math.ts';
+import { add, distance, dot, forwardVector, normalize, rightVector, scale, sub } from '../sim/math.ts';
+import { DODGE_ACT_THRESHOLD, type PlayerModel } from './learning/playerModel.ts';
 import type { EntityState, Vec3 } from '../sim/types.ts';
 import type { BrainContext } from './types.ts';
 
@@ -62,6 +63,7 @@ export function aimPoint(
   target: EntityState,
   tuning: AiTuning,
   config: SkyTagConfig,
+  model: PlayerModel | null = null,
 ): Vec3 {
   const toTarget = sub(target.pos, shooter.pos);
   const range = Math.hypot(toTarget.x, toTarget.y, toTarget.z);
@@ -75,7 +77,45 @@ export function aimPoint(
   const swing = Math.acos(cosAngle) / Math.max(tuning.turnRate, 1e-3);
 
   const leadTime = Math.min((flight ?? range / boltSpeed) + swing, MAX_LEAD_TIME);
-  return add(target.pos, scale(target.vel, leadTime * tuning.leadAccuracy));
+  const lead = add(target.pos, scale(target.vel, leadTime * tuning.leadAccuracy));
+  return model ? add(lead, dodgeCorrection(model, shooter.aimYaw, tuning, config)) : lead;
+}
+
+/**
+ * Shift the aim towards the way this opponent habitually breaks.
+ *
+ * DESIGN.md 7.2's "shoot where they dodge to", and the size of it is the whole
+ * difficulty. The lead has *already* predicted where a target holding its
+ * current velocity will be, so this must only account for the extra deviation
+ * from turning, which is `½at²` — a couple of metres over a typical flight,
+ * the same order as the hit radius.
+ *
+ * The first version used `speed x leadTime` instead, which re-applies the lead
+ * a second time: at hard difficulty that came out around 17 m against a 1.8 m
+ * target and halved the hunter's hit rate. A correction bigger than the thing
+ * it is correcting is not a correction.
+ */
+function dodgeCorrection(
+  model: PlayerModel,
+  aimYaw: number,
+  tuning: AiTuning,
+  config: SkyTagConfig,
+): Vec3 {
+  const lean = model.dodgeLean();
+  // Only a habit worth betting a shot on. See DODGE_ACT_THRESHOLD: against an
+  // opponent without a real tell the right correction is zero, and applying a
+  // small one anyway measures strictly worse than not learning at all.
+  if (Math.abs(lean) < DODGE_ACT_THRESHOLD) return { x: 0, y: 0, z: 0 };
+
+  // Scaled by how far a weave displaces a craft at all, which is the only
+  // honest bound on how far a habit can put them from the lead. `½at²` was
+  // tried and is wrong by an order of magnitude: it assumes full lateral
+  // thrust held for the whole flight, where a jink oscillates, and at a 1.5 s
+  // lead it produced 16 m corrections that cost hard CPUs ten points of
+  // accuracy.
+  const offset = lean * config.ai.jinkAmplitude * tuning.leadAccuracy;
+  const right = rightVector(aimYaw);
+  return { x: right.x * offset, y: 0, z: right.z * offset };
 }
 
 /**
@@ -88,7 +128,7 @@ export function aimPoint(
  */
 export function shotTarget(ctx: BrainContext): Vec3 | null {
   if (ctx.enemy && ctx.perception.visible && !ctx.perception.fooled) {
-    return aimPoint(ctx.self, ctx.enemy, ctx.tuning, ctx.config);
+    return aimPoint(ctx.self, ctx.enemy, ctx.tuning, ctx.config, ctx.opponent);
   }
   return ctx.estimate;
 }
@@ -221,8 +261,20 @@ export function findEscape(ctx: BrainContext, threat: Vec3, radius: number, samp
 export function searchPoint(ctx: BrainContext, radius: number): Vec3 {
   const { perception, rng, grid } = ctx;
   const anchor = perception.lastSeen?.pos;
+
   if (!anchor) return sampleArena(ctx);
 
+  // Note for anyone tempted to steer this with the player model: it was tried,
+  // twice, and both times measured *worse* than not learning at all (search
+  // 3.93s -> 6.07s). The reason is structural rather than a tuning problem.
+  // Every positional statistic the AI can gather is a record of sightings, and
+  // a sighting is by definition a moment the runner was not hidden — measured,
+  // the hunter sees the runner 28% of a round, and the areas it sees them in
+  // disagree with where they actually spend their time. Worse, "where they
+  // turn up again" is partly a record of where the hunter chose to look, so
+  // acting on it makes the CPU search where it already searches. The
+  // behavioural statistics (dodge, range, accuracy) carry no such bias, and
+  // those are the ones wired into play.
   const heading = perception.lastHeading();
   const lead = heading ? scale(heading, rng.range(10, radius)) : { x: 0, y: 0, z: 0 };
   const guess = add(add(anchor, lead), {
@@ -354,8 +406,12 @@ export function jink(ctx: BrainContext, destination: Vec3, threat: Vec3): Vec3 {
   // Hardest dodging up close, where the bolt arrives soonest and the hunter is
   // most dangerous; tapering off as the threat recedes.
   const urgency = 1 - Math.min(1, range / reach);
+  // The bias shifts the whole weave to one side rather than changing its
+  // shape, so a biased runner still dodges — it just spends more of the time
+  // on its favoured side, which is what a habit looks like.
+  const wave = Math.sin(ctx.memory.jinkPhase * Math.PI * 2 * config.ai.jinkRate);
   const offset =
-    Math.sin(ctx.memory.jinkPhase * Math.PI * 2 * config.ai.jinkRate) *
+    (wave * (1 - Math.abs(config.ai.jinkBias)) + config.ai.jinkBias) *
     config.ai.jinkAmplitude *
     urgency;
 
