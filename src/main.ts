@@ -21,7 +21,7 @@ import { FollowCamera } from './render/camera.ts';
 import { Effects } from './render/effects.ts';
 import { Hud, resultBanner, resultDetail, type HudViewport } from './render/hud.ts';
 import { SceneRenderer, TEAM_COLORS } from './render/scene.ts';
-import { CONFIG } from './sim/config.ts';
+import { CONFIG, cloneConfig } from './sim/config.ts';
 import { neutralInput, type PlayerInput, type Vec3 } from './sim/types.ts';
 import { World } from './sim/world.ts';
 import { showMatchResult, showMenu, type MatchSetup } from './ui/menu.ts';
@@ -54,13 +54,20 @@ async function main(): Promise<void> {
     mapId: params.get('map') ?? 'city01',
     seed: Number(params.get('seed') ?? CONFIG.sim.defaultSeed) || CONFIG.sim.defaultSeed,
   };
+  // Shorter rounds on demand, because the thing most worth checking by hand is
+  // phase 5’s learning, and that needs several matches — at the shipping
+  // 180 s best-of-three that is nine minutes per data point.
+  const rules = {
+    timeLimit: Number(params.get('time')) || CONFIG.rules.timeLimit,
+    roundsToWin: Number(params.get('rounds')) || CONFIG.rules.roundsToWin,
+  };
 
   // menu -> match -> result -> menu, for as long as the tab is open.
   for (;;) {
     const setup = await showMenu(uiRoot, defaults, () => store.clear());
     let outcome: 'rematch' | 'menu' = 'rematch';
     while (outcome === 'rematch') {
-      outcome = await runMatch(canvas, hudRoot, setup, store);
+      outcome = await runMatch(canvas, hudRoot, setup, store, rules);
     }
   }
 }
@@ -70,9 +77,13 @@ async function runMatch(
   hudRoot: HTMLElement,
   setup: MatchSetup,
   store: ModelStore,
+  rules: { timeLimit: number; roundsToWin: number },
 ): Promise<'rematch' | 'menu'> {
   const map = setup.mapId === 'generated' ? generateCityMap(setup.seed) : loadMap(setup.mapId);
-  const world = await World.create({ map, seed: setup.seed, slots: setup.devices.length });
+  const config = cloneConfig();
+  config.rules.timeLimit = rules.timeLimit;
+  config.rules.roundsToWin = rules.roundsToWin;
+  const world = await World.create({ map, config, seed: setup.seed, slots: setup.devices.length });
 
   // What the CPUs remember about the human they are about to play (DESIGN.md
   // 7.2). Loaded before the match starts so it is ready for round one, and
@@ -122,6 +133,13 @@ async function runMatch(
 
     const finish = async (): Promise<void> => {
       running = false;
+      // The last round of a match never reaches `nextRound`, so without this
+      // it would be observed but never counted.
+      learned.endRound();
+      // Saved here rather than after the result screen is dismissed: a player
+      // who closes the tab on the result screen has still played the match,
+      // and used to lose everything the CPU had learned from it.
+      if (learnedThisMatch(setup)) await store.save(modelKey, learned.toData());
       const choice = await showMatchResult(
         document.getElementById('ui') as HTMLElement,
         world.match,
@@ -186,8 +204,6 @@ async function runMatch(
   }
   renderer.dispose();
   world.dispose();
-  // Only worth keeping when a CPU was actually watching a human play.
-  if (learnedThisMatch(setup)) await store.save(modelKey, learned.toData());
   return outcome;
 }
 
